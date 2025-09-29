@@ -169,65 +169,12 @@ def load_models_and_get_influencers(paths: dict):
 
 # --- ИНТЕРФЕЙС ПРИЛОЖЕНИЯ ---
 
-# ИСПРАВЛЕНИЕ: Упрощена инициализация состояния
-if 'analysis_run' not in st.session_state: st.session_state.analysis_run = False
-if 'logs' not in st.session_state: st.session_state.logs = []
-
-models, strong_influencers, weak_influencers = load_models_and_get_influencers(MODEL_PATHS)
-if models is None: st.stop()
-
-# ИСПРАВЛЕНИЕ: Инициализация состояния для каждого виджета, если его еще нет
-for key in FEED_MAP.keys():
-    if f"inp_{key}" not in st.session_state:
-        st.session_state[f"inp_{key}"] = 0.0
-
-with st.sidebar:
-    st.header("⚙️ Параметры рациона")
-    uploaded_file = st.file_uploader("Загрузите PDF-отчет", type="pdf")
-
-    if uploaded_file is not None:
-        if st.session_state.get('last_uploaded_filename') != uploaded_file.name:
-            st.session_state.last_uploaded_filename = uploaded_file.name
-            parsed_data, logs = parse_pdf_report(uploaded_file)
-            st.session_state.logs = logs
-            if parsed_data:
-                # ИСПРАВЛЕНИЕ: Данные из PDF напрямую обновляют состояние виджетов
-                for key, value in parsed_data.items():
-                    st.session_state[f"inp_{key}"] = value
-                st.session_state.run_analysis_on_load = True
-            st.rerun()
-
-    st.subheader("Состав рациона (кг СВ):")
-    st.markdown("**Сильно влияющие компоненты**")
-    for key in strong_influencers:
-        # ИСПРАВЛЕНИЕ: Убрано присваивание, виджет сам управляет своим состоянием через key
-        st.number_input(
-            key, min_value=0.0, step=0.1, format="%.2f", key=f"inp_{key}"
-        )
-    st.markdown("**Прочие компоненты**")
-    for key in weak_influencers:
-        st.number_input(
-            key, min_value=0.0, step=0.1, format="%.2f", key=f"inp_{key}"
-        )
-
-    col1, col2 = st.columns(2)
-    calculate_button = col1.button("📈 Рассчитать", use_container_width=True, type="primary")
-    if col2.button("Сбросить", use_container_width=True):
-        for key in FEED_MAP.keys():
-            st.session_state[f"inp_{key}"] = 0.0
-        st.session_state.analysis_run = False
-        st.session_state.logs = []
-        st.session_state.last_uploaded_filename = None
-        st.rerun()
-
-if calculate_button or st.session_state.get('run_analysis_on_load', False):
-    st.session_state.run_analysis_on_load = False
-
-    # ИСПРАВЛЕНИЕ: Собираем актуальные данные из всех полей ввода перед расчетом
+# ИСПРАВЛЕНИЕ: Выносим функцию расчета в отдельный блок для `on_change`
+def run_analysis():
+    """Собирает данные из полей ввода и запускает полный цикл анализа."""
     current_inputs = {key: st.session_state[f"inp_{key}"] for key in FEED_MAP.keys()}
     features_df = engineer_features(current_inputs)
 
-    # ... (дальнейший блок расчета прогнозов остается без изменений)
     predictions = {}
     any_deviations = False
     for acid_name, model_data in models.items():
@@ -255,22 +202,68 @@ if calculate_button or st.session_state.get('run_analysis_on_load', False):
         predictions[acid_name] = {"mean": mean, "ci_lower": ci_low, "ci_upper": ci_up,
                                   "target": f"{t_min:.1f}%–{t_max:.1f}%", "target_min": t_min, "target_max": t_max,
                                   "status": status, "color": color}
+
     st.session_state.predictions = predictions
     st.session_state.any_deviations = any_deviations
     st.session_state.analysis_run = True
 
+
+# Инициализация состояния
+if 'analysis_run' not in st.session_state: st.session_state.analysis_run = False
+if 'logs' not in st.session_state: st.session_state.logs = []
+
+models, strong_influencers, weak_influencers = load_models_and_get_influencers(MODEL_PATHS)
+if models is None: st.stop()
+
+for key in FEED_MAP.keys():
+    if f"inp_{key}" not in st.session_state:
+        st.session_state[f"inp_{key}"] = 0.0
+
+with st.sidebar:
+    st.header("⚙️ Параметры рациона")
+    uploaded_file = st.file_uploader("Загрузите PDF-отчет", type="pdf")
+
+    if uploaded_file is not None:
+        if st.session_state.get('last_uploaded_filename') != uploaded_file.name:
+            st.session_state.last_uploaded_filename = uploaded_file.name
+            parsed_data, logs = parse_pdf_report(uploaded_file)
+            st.session_state.logs = logs
+            if parsed_data:
+                for key, value in parsed_data.items():
+                    st.session_state[f"inp_{key}"] = value
+                # Вместо флага напрямую вызываем анализ
+                run_analysis()
+                st.rerun()
+
+    st.subheader("Состав рациона (кг СВ):")
+    st.markdown("**Сильно влияющие компоненты**")
+    for key in strong_influencers:
+        st.number_input(key, min_value=0.0, step=0.1, format="%.2f", key=f"inp_{key}", on_change=run_analysis)
+
+    st.markdown("**Прочие компоненты**")
+    for key in weak_influencers:
+        st.number_input(key, min_value=0.0, step=0.1, format="%.2f", key=f"inp_{key}", on_change=run_analysis)
+
+    col1, col2 = st.columns(2)
+    col1.button("📈 Рассчитать", use_container_width=True, type="primary", on_click=run_analysis)
+    if col2.button("Сбросить", use_container_width=True):
+        for key in FEED_MAP.keys():
+            st.session_state[f"inp_{key}"] = 0.0
+        st.session_state.analysis_run = False
+        st.session_state.logs = []
+        st.session_state.last_uploaded_filename = None
+        st.rerun()
+
+# --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ---
 st.title("🐄 Аналитический дашборд")
 
 if st.session_state.logs:
     with st.expander("📝 Логи разбора PDF-файла", expanded=False):
         st.code("\n".join(st.session_state.logs), language='text')
 
-# ... (весь блок отображения результатов остается без изменений)
 if not st.session_state.analysis_run:
     st.info("Введите данные в панели слева или загрузите PDF-отчет для начала анализа.")
     st.markdown("---")
-    st.subheader("Пример дашборда после анализа")
-    st.text("Здесь появятся метрики, рекомендации и график...")
 else:
     preds = st.session_state.predictions
     st.subheader("Прогноз по жирным кислотам")
