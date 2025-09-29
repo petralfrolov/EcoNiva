@@ -169,7 +169,6 @@ def load_models_and_get_influencers(paths: dict):
 
 # --- ИНТЕРФЕЙС ПРИЛОЖЕНИЯ ---
 
-# ИСПРАВЛЕНИЕ: Выносим функцию расчета в отдельный блок для `on_change`
 def run_analysis():
     """Собирает данные из полей ввода и запускает полный цикл анализа."""
     current_inputs = {key: st.session_state[f"inp_{key}"] for key in FEED_MAP.keys()}
@@ -208,6 +207,16 @@ def run_analysis():
     st.session_state.analysis_run = True
 
 
+# ИСПРАВЛЕНИЕ: Callback-функция для кнопки сброса
+def reset_app_state():
+    """Очищает все поля ввода и сбрасывает состояние анализа."""
+    for key in FEED_MAP.keys():
+        st.session_state[f"inp_{key}"] = 0.0
+    st.session_state.analysis_run = False
+    st.session_state.logs = []
+    st.session_state.last_uploaded_filename = None
+
+
 # Инициализация состояния
 if 'analysis_run' not in st.session_state: st.session_state.analysis_run = False
 if 'logs' not in st.session_state: st.session_state.logs = []
@@ -231,7 +240,6 @@ with st.sidebar:
             if parsed_data:
                 for key, value in parsed_data.items():
                     st.session_state[f"inp_{key}"] = value
-                # Вместо флага напрямую вызываем анализ
                 run_analysis()
                 st.rerun()
 
@@ -246,13 +254,8 @@ with st.sidebar:
 
     col1, col2 = st.columns(2)
     col1.button("📈 Рассчитать", use_container_width=True, type="primary", on_click=run_analysis)
-    if col2.button("Сбросить", use_container_width=True):
-        for key in FEED_MAP.keys():
-            st.session_state[f"inp_{key}"] = 0.0
-        st.session_state.analysis_run = False
-        st.session_state.logs = []
-        st.session_state.last_uploaded_filename = None
-        st.rerun()
+    # ИСПРАВЛЕНИЕ: Логика сброса вынесена в callback-функцию
+    col2.button("Сбросить", use_container_width=True, on_click=reset_app_state)
 
 # --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ---
 st.title("🐄 Аналитический дашборд")
@@ -263,7 +266,6 @@ if st.session_state.logs:
 
 if not st.session_state.analysis_run:
     st.info("Введите данные в панели слева или загрузите PDF-отчет для начала анализа.")
-    st.markdown("---")
 else:
     preds = st.session_state.predictions
     st.subheader("Прогноз по жирным кислотам")
