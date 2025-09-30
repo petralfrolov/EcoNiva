@@ -48,8 +48,8 @@ MODEL_PATHS = {
     "Олеиновая": Path(r'C:\Users\Петр\papka bebrapka\ols_Олеиновая.pkl'),
 }
 TARGET_RANGES = {
-    "Лауриновая": (3.0, 4.0), "Пальмитиновая": (30.0, 32.0),
-    "Стеариновая": (8.0, 12.0), "Олеиновая": (20.0, 25.0),
+    "Лауриновая": (2.0, 4.4), "Пальмитиновая": (21.0, 32.0),
+    "Стеариновая": (8.0, 13.5), "Олеиновая": (20.0, 28.0),
 }
 FEATURE_TO_COMPONENT_MAP = {
     'Sum_conc': ['Кукуруза', 'Зерновые_прочие', 'Комбикорма', 'Корнаж_ЗСК'],
@@ -170,8 +170,12 @@ def load_models_and_get_influencers(paths: dict):
 # --- ИНТЕРФЕЙС ПРИЛОЖЕНИЯ ---
 
 def run_analysis():
-    """Собирает данные из полей ввода и запускает полный цикл анализа."""
     current_inputs = {key: st.session_state[f"inp_{key}"] for key in FEED_MAP.keys()}
+
+    # Сохраняем текущие инпуты и общую сумму в состояние для отображения
+    st.session_state.current_inputs = current_inputs
+    st.session_state.total_sv = sum(current_inputs.values())
+
     features_df = engineer_features(current_inputs)
 
     predictions = {}
@@ -207,26 +211,23 @@ def run_analysis():
     st.session_state.analysis_run = True
 
 
-# ИСПРАВЛЕНИЕ: Callback-функция для кнопки сброса
 def reset_app_state():
-    """Очищает все поля ввода и сбрасывает состояние анализа."""
     for key in FEED_MAP.keys():
         st.session_state[f"inp_{key}"] = 0.0
     st.session_state.analysis_run = False
     st.session_state.logs = []
     st.session_state.last_uploaded_filename = None
+    if 'current_inputs' in st.session_state:
+        del st.session_state['current_inputs']
 
 
 # Инициализация состояния
 if 'analysis_run' not in st.session_state: st.session_state.analysis_run = False
 if 'logs' not in st.session_state: st.session_state.logs = []
-
 models, strong_influencers, weak_influencers = load_models_and_get_influencers(MODEL_PATHS)
 if models is None: st.stop()
-
 for key in FEED_MAP.keys():
-    if f"inp_{key}" not in st.session_state:
-        st.session_state[f"inp_{key}"] = 0.0
+    if f"inp_{key}" not in st.session_state: st.session_state[f"inp_{key}"] = 0.0
 
 with st.sidebar:
     st.header("⚙️ Параметры рациона")
@@ -254,7 +255,6 @@ with st.sidebar:
 
     col1, col2 = st.columns(2)
     col1.button("📈 Рассчитать", use_container_width=True, type="primary", on_click=run_analysis)
-    # ИСПРАВЛЕНИЕ: Логика сброса вынесена в callback-функцию
     col2.button("Сбросить", use_container_width=True, on_click=reset_app_state)
 
 # --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ---
@@ -267,36 +267,91 @@ if st.session_state.logs:
 if not st.session_state.analysis_run:
     st.info("Введите данные в панели слева или загрузите PDF-отчет для начала анализа.")
 else:
+    # --- НОВЫЙ БЛОК: РАЦИОН ---
+    st.subheader("Рацион")
+    col1, col2 = st.columns([2, 1])  # Делаем первую колонку в 2 раза шире
+
+    with col1:
+        current_inputs = st.session_state.current_inputs
+        pie_data = {k: v for k, v in current_inputs.items() if v > 0}
+        if pie_data:
+            pie_fig = go.Figure(data=[go.Pie(
+                labels=list(pie_data.keys()),
+                values=list(pie_data.values()),
+                hole=.3
+            )])
+            pie_fig.update_layout(title_text="Структура рациона по категориям", showlegend=False)
+            st.plotly_chart(pie_fig, use_container_width=True)
+        else:
+            st.info("Нет данных для отображения структуры рациона.")
+
+    with col2:
+        total_sv = st.session_state.total_sv
+        st.metric(label="Сумма СВ кг/день", value=f"{total_sv:.2f}")
+
+        if total_sv < 15:
+            st.error("🔴 Общее количество СВ ниже нормы (< 15 кг). Рекомендуется увеличить объем рациона.")
+        elif total_sv > 30:
+            st.error("🔴 Общее количество СВ выше нормы (> 30 кг). Рекомендуется снизить объем рациона.")
+        else:
+            st.success("🟢 Общее количество СВ в норме.")
+
+    st.markdown("---")
     preds = st.session_state.predictions
     st.subheader("Прогноз по жирным кислотам")
     cols = st.columns(len(preds))
+    # ... (отображение метрик и рекомендаций без изменений)
     for i, (acid_name, data) in enumerate(preds.items()):
         cols[i].metric(
             label=f"{acid_name} ({data['status']})", value=f"{data['mean']:.2f}%",
             help=f"Цель: {data['target']}. 95% ДИ: {data['ci_lower']:.2f}%–{data['ci_upper']:.2f}%"
         )
     if st.session_state.any_deviations:
-        st.subheader("⚠️ Рекомендации по корректировке")
         recs = [f"**{acid}**: {data['status']}. Проверьте влияние связанных компонентов." for acid, data in
                 preds.items() if "🟢" not in data['status']]
         st.warning("\n".join(f"* {rec}" for rec in recs))
-    st.subheader("Визуализация")
+
+    # --- ИСПРАВЛЕННЫЙ БЛОК ВИЗУАЛИЗАЦИИ ---
     fig = go.Figure()
+
     acid_names = list(preds.keys())
+    mean_values = [p['mean'] for p in preds.values()]
+
+    # Сначала добавляем цветные бары
     for acid_name in reversed(acid_names):
         p = preds[acid_name]
         fig.add_trace(go.Bar(
             y=[acid_name], x=[p['mean']], name=acid_name, orientation='h', marker_color=p['color'],
             error_x=dict(type='data', symmetric=False, array=[p['ci_upper'] - p['mean']],
-                         arrayminus=[p['mean'] - p['ci_lower']]),
+                         arrayminus=[p['mean'] - p['ci_lower']], thickness=1.5, width=4),
             text=f"{p['mean']:.2f}%", textposition='outside'
         ))
+
+    # Потом добавляем зоны, чтобы они были сверху
+    for acid_name in reversed(acid_names):
+        p = preds[acid_name]
         fig.add_shape(
-            type="rect", xref="x", yref="y", x0=p['target_min'], y0=acid_name, x1=p['target_max'], y1=acid_name,
-            y0shift=-0.35, y1shift=0.35, fillcolor="lightgreen", opacity=0.3, layer="below", line_width=0
+            type="rect", xref="x", yref="y",
+            x0=p['target_min'], y0=acid_name,
+            x1=p['target_max'], y1=acid_name,
+            y0shift=-0.35, y1shift=0.35,
+            fillcolor="green", opacity=0.2,  # Полупрозрачный цвет
+            layer="above",  # Отображаем поверх баров
+            line_width=0
         )
+
+    # В самом конце добавляем жирные точки прогноза
+    fig.add_trace(go.Scatter(
+        y=acid_names,
+        x=mean_values,
+        mode='markers',
+        marker=dict(color='black', size=8, symbol='diamond'),
+        showlegend=False
+    ))
+
     fig.update_layout(
-        title_text="Прогноз (точка), 95% ДИ (линия) и целевой диапазон (зеленая зона)",
-        barmode='stack', yaxis_title="Жирная кислота", xaxis_title="Содержание, %", showlegend=False, height=400
+        title_text="Прогноз (◆), 95% ДИ (линия) и целевой диапазон (зеленая зона)",
+        barmode='stack', yaxis_title="Жирная кислота", xaxis_title="Содержание, %",
+        showlegend=False, height=400
     )
     st.plotly_chart(fig, use_container_width=True)
