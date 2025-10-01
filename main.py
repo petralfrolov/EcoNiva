@@ -390,6 +390,7 @@ with st.sidebar:
                 st.rerun()
 
     st.subheader("Состав рациона (кг СВ):")
+    st.button("Сбросить изменения", use_container_width=True, on_click=reset_app_state)
     st.markdown("**Сильно влияющие компоненты**")
     for key in strong_influencers:
         st.number_input(key, min_value=0.0, step=0.1, format="%.2f", key=f"inp_{key}", on_change=run_analysis)
@@ -397,10 +398,6 @@ with st.sidebar:
     st.markdown("**Прочие компоненты**")
     for key in weak_influencers:
         st.number_input(key, min_value=0.0, step=0.1, format="%.2f", key=f"inp_{key}", on_change=run_analysis)
-
-    col1, col2 = st.columns(2)
-    col1.button("📈 Рассчитать", use_container_width=True, type="primary", on_click=run_analysis)
-    col2.button("Сбросить", use_container_width=True, on_click=reset_app_state)
 
 # --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ---
 st.title("🐄 Аналитический дашборд")
@@ -414,6 +411,25 @@ if not st.session_state.analysis_run:
 else:
     # --- НОВЫЙ БЛОК: РАЦИОН ---
     st.subheader("Рацион")
+    st.markdown("""
+    <style>
+    /* Заголовки */
+    h1, h2, h3 { line-height: 1.2; }
+    h2 { font-size: 1.6rem !important; }   /* st.subheader */
+    h3 { font-size: 1.3rem !important; }
+
+    /* Карточки metric */
+    [data-testid="stMetricValue"] { font-size: 2rem; }
+    [data-testid="stMetricLabel"] { font-size: 1.1rem; }
+    [data-testid="stMetricDelta"] { font-size: 1rem; }
+
+    /* Текст в info/success/warning */
+    .block-container p, .stAlert { font-size: 1rem; }
+
+    /* Немного крупнее подписи под графиками и в тултипах Plotly
+       (основное для тултипов уже задано в hoverlabel) */
+    </style>
+    """, unsafe_allow_html=True)
     FONT = 16
     col1, col2 = st.columns([2, 1])
 
@@ -429,7 +445,8 @@ else:
             )])
             pie_fig.update_traces(textfont_size=FONT)  # подписи сегментов
             pie_fig.update_layout(
-                margin=dict(l=30, r=30, t=10, b=40),
+                height=400,
+                margin=dict(l=30, r=30, t=10, b=30),
                 font=dict(size=FONT + 2),  # общий шрифт внутри фигуры
                 legend=dict(font=dict(size=FONT)),  # легенда (если понадобится)
                 showlegend=False,
@@ -545,6 +562,7 @@ else:
     ))
 
     fig.update_layout(
+        margin=dict(l=50, r=50, t=10, b=10),
         font=dict(size=FONT + 2),
         hoverlabel=dict(font=dict(size=FONT)),
         title_text="",
@@ -560,7 +578,6 @@ else:
             bgcolor="rgba(255,255,255,0.6)"
         ),
         height=600,
-        margin=dict(t=60, r=20, l=80, b=40)
     )
 
     # шрифты осей: заголовки и деления
