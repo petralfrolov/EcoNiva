@@ -181,10 +181,16 @@ MODEL_PATHS = {
     "Пальмитиновая": Path(r'C:\Users\Петр\papka bebrapka\ols_Пальмитиновая.pkl'),
     "Стеариновая": Path(r'C:\Users\Петр\papka bebrapka\ols_Стеариновая.pkl'),
     "Олеиновая": Path(r'C:\Users\Петр\papka bebrapka\ols_Олеиновая.pkl'),
+    "Линолевая": Path(r'C:\Users\Петр\papka bebrapka\ols_Линолевая.pkl'),
+    "Линоленовая": Path(r'C:\Users\Петр\papka bebrapka\ols_Линоленовая.pkl'),
 }
 TARGET_RANGES = {
-    "Лауриновая": (2.0, 4.4), "Пальмитиновая": (21.0, 32.0),
-    "Стеариновая": (8.0, 13.5), "Олеиновая": (20.0, 28.0),
+    "Лауриновая": (2.0, 4.4),
+    "Пальмитиновая": (21.0, 32.0),
+    "Стеариновая": (8.0, 13.5),
+    "Олеиновая": (20.0, 28.0),
+    "Линолевая": (2.2, 5.0),
+    "Линоленовая": (0.0, 1.5),
 }
 FEATURE_TO_COMPONENT_MAP = {
     'Sum_conc': ['Кукуруза', 'Зерновые_прочие', 'Комбикорма', 'Корнаж_ЗСК'],
@@ -211,24 +217,24 @@ def parse_pdf_report(uploaded_file):
                 if extracted: tables.extend(extracted)
         logs.append(f"Найдено таблиц в PDF: {len(tables)}")
     except Exception as e:
-        logs.append(f"КРИТИЧЕСКАЯ ОШИБКА при чтении PDF: {e}");
+        logs.append(f"КРИТИЧЕСКАЯ ОШИБКА при чтении PDF: {e}")
         return {}, logs
     if not tables or len(tables[0]) < 2:
-        logs.append("ОШИБКА: Не удалось найти подходящую таблицу с данными в PDF.");
+        logs.append("ОШИБКА: Не удалось найти подходящую таблицу с данными в PDF.")
         return {}, logs
     df = pd.DataFrame(tables[0][1:], columns=tables[0][0])
-    df.columns = df.iloc[0];
+    df.columns = df.iloc[0]
     df = df[1:].reset_index(drop=True)
     logs.append(f"Обнаружены колонки: {list(df.columns)}")
     ingredient_col = next((c for c in df.columns if 'Ингредиент' in c), None)
     sv_kg_col = next((c for c in df.columns if 'СВ кг' in c), None)
     if not ingredient_col or not sv_kg_col:
-        logs.append("ОШИБКА: В таблице не найдены обязательные колонки 'Ингредиенты' или 'СВ кг'.");
+        logs.append("ОШИБКА: В таблице не найдены обязательные колонки 'Ингредиенты' или 'СВ кг'.")
         return {}, logs
     logs.append(f"Колонка ингредиентов: '{ingredient_col}', колонка данных: '{sv_kg_col}'")
     df = df[[ingredient_col, sv_kg_col]].copy()
     df[sv_kg_col] = pd.to_numeric(df[sv_kg_col].str.replace(',', '.'), errors='coerce')
-    df.dropna(inplace=True);
+    df.dropna(inplace=True)
     logs.append(f"Найдено {len(df)} строк с числовыми данными.")
     df['clean_name'] = (df[ingredient_col].astype(str).str.split('/', n=1).str[0]
                         .str.replace(r'\s{2,}', ' ', regex=True)
@@ -262,7 +268,7 @@ def parse_pdf_report(uploaded_file):
 
 @st.cache_data
 def engineer_features(manual_inputs: dict):
-    df = pd.DataFrame([manual_inputs]);
+    df = pd.DataFrame([manual_inputs])
     eps = 1e-9
     df['Sum_conc'] = df[['Кукуруза', 'Зерновые_прочие', 'Комбикорма', 'Корнаж_ЗСК']].sum(axis=1)
     df['Sum_rough'] = df[['Сенаж', 'Сено', 'Солома']].sum(axis=1)
@@ -281,11 +287,11 @@ def engineer_features(manual_inputs: dict):
 
 @st.cache_resource
 def load_models_and_get_influencers(paths: dict):
-    models = {};
+    models = {}
     all_model_features = set()
     for acid_name, path in paths.items():
         if not path.exists():
-            st.error(f"Файл модели не найден: {path}");
+            st.error(f"Файл модели не найден: {path}")
             return None, [], []
         with open(path, "rb") as f:
             model_data = pickle.load(f)
@@ -315,26 +321,31 @@ def run_analysis():
     predictions = {}
     any_deviations = False
     for acid_name, model_data in models.items():
-        model = model_data['model'];
+        model = model_data['model']
         model_features = model_data['features']
         if not all(f in features_df.columns for f in model_features):
-            st.error(f"Ошибка: для модели '{acid_name}' не хватает признаков.");
+            st.error(f"Ошибка: для модели '{acid_name}' не хватает признаков.")
             continue
         X = features_df[model_features]
         if model_data.get('add_constant', True): X = sm.add_constant(X, has_constant='add')
         pred_summary = model.get_prediction(X).summary_frame(alpha=0.05)
-        mean, ci_low, ci_up = pred_summary['mean'].iloc[0], pred_summary['mean_ci_lower'].iloc[0], \
-        pred_summary['mean_ci_upper'].iloc[0]
+        mean, ci_low, ci_up = \
+            pred_summary['mean'].iloc[0], \
+            pred_summary['mean_ci_lower'].iloc[0], \
+            pred_summary['mean_ci_upper'].iloc[0]
+        mean = max(0.0, float(mean))
+        ci_low = max(0.0, float(ci_low))
+        ci_up = max(0.0, float(ci_up))
         t_min, t_max = TARGET_RANGES[acid_name]
-        color = '#2ca02c';
+        color = '#2ca02c'
         status = "🟢 Норма"
         if mean < t_min or mean > t_max:
-            status = "🔴 Вне нормы";
-            any_deviations = True;
+            status = "🔴 Вне нормы"
+            any_deviations = True
             color = '#d62728'
         elif ci_low < t_min or ci_up > t_max:
-            status = "🟡 Риск отклонения";
-            any_deviations = True;
+            status = "🟡 Риск отклонения"
+            any_deviations = True
             color = '#ff7f0e'
         predictions[acid_name] = {"mean": mean, "ci_lower": ci_low, "ci_upper": ci_up,
                                   "target": f"{t_min:.1f}%–{t_max:.1f}%", "target_min": t_min, "target_max": t_max,
@@ -403,7 +414,7 @@ if not st.session_state.analysis_run:
 else:
     # --- НОВЫЙ БЛОК: РАЦИОН ---
     st.subheader("Рацион")
-    col1, col2 = st.columns([2, 1])  # Делаем первую колонку в 2 раза шире
+    col1, col2 = st.columns([1, 1])  # Делаем первую колонку в 2 раза шире
 
     with col1:
         current_inputs = st.session_state.current_inputs
@@ -414,7 +425,7 @@ else:
                 values=list(pie_data.values()),
                 hole=.3
             )])
-            pie_fig.update_layout(title_text="Структура рациона по категориям", showlegend=False)
+            # pie_fig.update_layout(title_text="Структура рациона по категориям", showlegend=False)
             st.plotly_chart(pie_fig, use_container_width=True)
         else:
             st.info("Нет данных для отображения структуры рациона.")
@@ -448,8 +459,18 @@ else:
     # --- ИСПРАВЛЕННЫЙ БЛОК ВИЗУАЛИЗАЦИИ ---
     fig = go.Figure()
 
-    acid_names = list(preds.keys())
-    mean_values = [p['mean'] for p in preds.values()]
+    rows = []
+    for acid_name, p in preds.items():
+        center = 0.5 * (p['target_min'] + p['target_max'])
+        span = max(p['target_max'] - p['target_min'], 1e-9)  # защита от нулевой ширины
+        delta_norm = abs(p['mean'] - center) / span  # нормализованное отклонение
+        rows.append((acid_name, delta_norm))
+
+    # чем больше |норм. отклонение|, тем выше в списке
+    rows.sort(key=lambda x: x[1], reverse=True)
+
+    acid_names = [name for name, _ in rows]
+    mean_values = [preds[name]['mean'] for name in acid_names]
 
     # Сначала добавляем цветные бары
     for acid_name in reversed(acid_names):
@@ -468,8 +489,8 @@ else:
             type="rect", xref="x", yref="y",
             x0=p['target_min'], y0=acid_name,
             x1=p['target_max'], y1=acid_name,
-            y0shift=-0.35, y1shift=0.35,
-            fillcolor="green", opacity=0.2,  # Полупрозрачный цвет
+            y0shift=-0.45, y1shift=0.45,
+            fillcolor="green", opacity=0.4,  # Полупрозрачный цвет
             layer="above",  # Отображаем поверх баров
             line_width=0
         )
@@ -484,8 +505,8 @@ else:
     ))
 
     fig.update_layout(
-        title_text="Прогноз (◆), 95% ДИ (линия) и целевой диапазон (зеленая зона)",
+        title_text="Прогноз (◆), Доверительный интервал 95% (линия) и целевой диапазон (зеленая зона)",
         barmode='stack', yaxis_title="Жирная кислота", xaxis_title="Содержание, %",
-        showlegend=False, height=400
+        showlegend=False, height=600
     )
     st.plotly_chart(fig, use_container_width=True)
