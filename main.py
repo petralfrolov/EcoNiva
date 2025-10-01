@@ -476,10 +476,16 @@ else:
     for acid_name in reversed(acid_names):
         p = preds[acid_name]
         fig.add_trace(go.Bar(
-            y=[acid_name], x=[p['mean']], name=acid_name, orientation='h', marker_color=p['color'],
+            y=[acid_name],
+            x=[p['mean']],
+            name=acid_name,
+            showlegend=False,
+            orientation='h',
+            marker_color=p['color'],
             error_x=dict(type='data', symmetric=False, array=[p['ci_upper'] - p['mean']],
-                         arrayminus=[p['mean'] - p['ci_lower']], thickness=1.5, width=4),
-            text=f"{p['mean']:.2f}%", textposition='outside'
+                         arrayminus=[p['mean'] - p['ci_lower']], thickness=3, width=6),
+            # text=f"{p['mean']:.2f}%",
+            # textposition='auto'
         ))
 
     # Потом добавляем зоны, чтобы они были сверху
@@ -504,9 +510,47 @@ else:
         showlegend=False
     ))
 
+    # --- Легенда (прокси-трейсы) ---
+    # Прогноз (бриллиант)
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        marker=dict(symbol="diamond", size=10, color="black"),
+        name="Прогноз",
+        hoverinfo="skip", showlegend=True
+    ))
+    # 95% ДИ (линия)
+    fig.add_trace(go.Scatter(
+        x=[None, None], y=[None, None], mode="lines",
+        line=dict(width=3, color="black"),
+        name="Доверительный интервал 95%",
+        hoverinfo="skip", showlegend=True
+    ))
+    # Целевой диапазон (зелёная зона)
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        marker=dict(symbol="square", size=12,
+                    color="rgba(0,128,0,0.35)",
+                    line=dict(color="green", width=1)),
+        name="Целевой диапазон",
+        hoverinfo="skip", showlegend=True
+    ))
+
     fig.update_layout(
-        title_text="Прогноз (◆), Доверительный интервал 95% (линия) и целевой диапазон (зеленая зона)",
-        barmode='stack', yaxis_title="Жирная кислота", xaxis_title="Содержание, %",
-        showlegend=False, height=600
+        title_text="",  # убираем текст из заголовка
+        barmode="stack",
+        yaxis_title="Жирная кислота",
+        xaxis_title="Содержание, %",
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom", y=1.02,
+            xanchor="left", x=0,
+            bgcolor="rgba(255,255,255,0.6)"
+        ),
+        height=600,
+        margin=dict(t=60, r=20, l=80, b=40)
     )
+    # Сетка
+    fig.update_xaxes(showgrid=True, gridcolor="rgba(0,0,0,0.12)", zeroline=False)
+    fig.update_yaxes(showgrid=False)
     st.plotly_chart(fig, use_container_width=True)
