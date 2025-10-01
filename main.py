@@ -414,7 +414,8 @@ if not st.session_state.analysis_run:
 else:
     # --- НОВЫЙ БЛОК: РАЦИОН ---
     st.subheader("Рацион")
-    col1, col2 = st.columns([1, 1])  # Делаем первую колонку в 2 раза шире
+    FONT = 16
+    col1, col2 = st.columns([2, 1])
 
     with col1:
         current_inputs = st.session_state.current_inputs
@@ -423,9 +424,17 @@ else:
             pie_fig = go.Figure(data=[go.Pie(
                 labels=list(pie_data.keys()),
                 values=list(pie_data.values()),
-                hole=.3
+                hole=.3,
+                textinfo="label+percent"
             )])
-            # pie_fig.update_layout(title_text="Структура рациона по категориям", showlegend=False)
+            pie_fig.update_traces(textfont_size=FONT)  # подписи сегментов
+            pie_fig.update_layout(
+                margin=dict(l=30, r=30, t=10, b=40),
+                font=dict(size=FONT + 2),  # общий шрифт внутри фигуры
+                legend=dict(font=dict(size=FONT)),  # легенда (если понадобится)
+                showlegend=False,
+                hoverlabel=dict(font=dict(size=FONT))  # всплывающие подсказки
+            )
             st.plotly_chart(pie_fig, use_container_width=True)
         else:
             st.info("Нет данных для отображения структуры рациона.")
@@ -536,12 +545,15 @@ else:
     ))
 
     fig.update_layout(
-        title_text="",  # убираем текст из заголовка
+        font=dict(size=FONT + 2),
+        hoverlabel=dict(font=dict(size=FONT)),
+        title_text="",
         barmode="stack",
         yaxis_title="Жирная кислота",
         xaxis_title="Содержание, %",
         showlegend=True,
         legend=dict(
+            font=dict(size=FONT),  # размер шрифта легенды
             orientation="h",
             yanchor="bottom", y=1.02,
             xanchor="left", x=0,
@@ -550,7 +562,13 @@ else:
         height=600,
         margin=dict(t=60, r=20, l=80, b=40)
     )
+
+    # шрифты осей: заголовки и деления
+    fig.update_xaxes(title_font=dict(size=FONT + 2), tickfont=dict(size=FONT))
+    fig.update_yaxes(title_font=dict(size=FONT + 2), tickfont=dict(size=FONT))
+
     # Сетка
     fig.update_xaxes(showgrid=True, gridcolor="rgba(0,0,0,0.12)", zeroline=False)
     fig.update_yaxes(showgrid=False)
+
     st.plotly_chart(fig, use_container_width=True)
