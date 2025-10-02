@@ -368,7 +368,6 @@ def build_measures(preds: dict,
       - если ΣСВ ≥ sv_max - sv_margin → не предлагать увеличения;
         если ΣСВ ≤ sv_min + sv_margin → не предлагать уменьшения.
     """
-    def _total_sv(x: dict) -> float: return float(sum(x.values()))
 
     sv = _total_sv(base_inputs)
     sv_min, sv_max = sv_bounds
@@ -379,6 +378,8 @@ def build_measures(preds: dict,
     all_inc, all_dec = [], []
 
     for acid, d in preds.items():
+        if acid not in sens_df.columns:
+            continue
         status = d['status']
         mean = d['mean']
         lo, hi = d['target_min'], d['target_max']
@@ -435,7 +436,11 @@ def build_measures(preds: dict,
     }
     return measures, heavy
 
-
+def get_current_inputs():
+    # Всегда отдаёт словарь входов; даже если анализа ещё не было
+    if 'current_inputs' in st.session_state:
+        return st.session_state.current_inputs
+    return {k: st.session_state.get(f"inp_{k}", 0.0) for k in FEED_MAP.keys()}
 
 
 # --- ИНТЕРФЕЙС ПРИЛОЖЕНИЯ ---
@@ -498,8 +503,14 @@ def reset_app_state():
 
 
 # Инициализация состояния
-if 'analysis_run' not in st.session_state: st.session_state.analysis_run = False
-if 'logs' not in st.session_state: st.session_state.logs = []
+if 'analysis_run' not in st.session_state:
+    st.session_state.analysis_run = False
+if 'logs' not in st.session_state:
+    st.session_state.logs = []
+if 'current_inputs' not in st.session_state:
+    st.session_state.current_inputs = {k: st.session_state.get(f"inp_{k}", 0.0) for k in FEED_MAP.keys()}
+if 'total_sv' not in st.session_state:
+    st.session_state.total_sv = float(sum(st.session_state.current_inputs.values()))
 models, strong_influencers, weak_influencers = load_models_and_get_influencers(MODEL_PATHS)
 if models is None: st.stop()
 for key in FEED_MAP.keys():
@@ -565,7 +576,7 @@ else:
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        current_inputs = st.session_state.current_inputs
+        current_inputs = get_current_inputs()
         pie_data = {k: v for k, v in current_inputs.items() if v > 0}
         if pie_data:
             pie_fig = go.Figure(data=[go.Pie(
@@ -611,12 +622,12 @@ else:
 
     # === РЕКОМЕНДАЦИИ: форматированный Markdown со строками-переносами ===
     if st.session_state.any_deviations:
-        df_sens_use = get_sens_matrix_cached(st.session_state.current_inputs, step=0.5)
+        df_sens_use = get_sens_matrix_cached(get_current_inputs(), step=0.5)
 
         measures, heavy = build_measures(
             preds=preds,
             sens_df=df_sens_use,
-            base_inputs=st.session_state.current_inputs,
+            base_inputs=get_current_inputs(),
             sv_bounds=(15.0, 30.0),
             sv_margin=0.5,
             top_k=3
@@ -759,7 +770,7 @@ else:
 st.markdown("---")
 with st.expander("🔍 Интерпретация (Δ п.п. на +1 кг компонента)", expanded=False):
     step_val = 0.5  # можно вынести в слайдер выше по странице, если нужно управлять
-    base_inputs = st.session_state.current_inputs
+    base_inputs = get_current_inputs()
     df_sens = sensitivities_matrix(base_inputs, step=step_val)
     st.session_state['sens_matrix_last'] = df_sens  # кэш на сессию
     st.dataframe(df_sens.round(3), use_container_width=True)
