@@ -1,0 +1,172 @@
+import streamlit as st
+import numpy as np
+import pandas as pd
+
+from config import (
+    PAGE_TITLE, FONT, SV_BOUNDS, SV_MARGIN,
+    FEED_MAP, MODEL_PATHS, TARGET_RANGES
+)
+from io_parsing import parse_pdf_report
+from models_math import (
+    engineer_features, load_models_and_get_influencers,
+    predict_all_acids, sensitivities_matrix, build_measures
+)
+from visuals import style_css, build_pie_figure, build_acids_bar_figure
+
+# --- Конфигурация страницы ---
+st.set_page_config(layout="wide", page_title=PAGE_TITLE)
+
+# --- Хелперы состояния ---
+def get_current_inputs():
+    if 'current_inputs' in st.session_state:
+        return st.session_state.current_inputs
+    return {k: st.session_state.get(f"inp_{k}", 0.0) for k in FEED_MAP.keys()}
+
+def reset_app_state():
+    for key in FEED_MAP.keys():
+        st.session_state[f"inp_{key}"] = 0.0
+    st.session_state.analysis_run = False
+    st.session_state.logs = []
+    st.session_state.last_uploaded_filename = None
+    if 'current_inputs' in st.session_state:
+        del st.session_state['current_inputs']
+
+def run_analysis():
+    current_inputs = {key: st.session_state[f"inp_{key}"] for key in FEED_MAP.keys()}
+    st.session_state.current_inputs = current_inputs
+    st.session_state.total_sv = sum(current_inputs.values())
+    preds, any_deviations = predict_all_acids(models, current_inputs, TARGET_RANGES)
+    st.session_state.predictions = preds
+    st.session_state.any_deviations = any_deviations
+    st.session_state.analysis_run = True
+
+# --- Инициализация состояния ---
+if 'analysis_run' not in st.session_state:
+    st.session_state.analysis_run = False
+if 'logs' not in st.session_state:
+    st.session_state.logs = []
+if 'current_inputs' not in st.session_state:
+    st.session_state.current_inputs = {k: st.session_state.get(f"inp_{k}", 0.0) for k in FEED_MAP.keys()}
+if 'total_sv' not in st.session_state:
+    st.session_state.total_sv = float(sum(st.session_state.current_inputs.values()))
+for key in FEED_MAP.keys():
+    if f"inp_{key}" not in st.session_state:
+        st.session_state[f"inp_{key}"] = 0.0
+
+# --- Загрузка моделей ---
+models, strong_influencers, weak_influencers = load_models_and_get_influencers(MODEL_PATHS)
+if models is None:
+    st.stop()
+
+# --- Сайдбар ---
+with st.sidebar:
+    st.header("⚙️ Параметры рациона")
+    uploaded_file = st.file_uploader("Загрузите PDF-отчет", type="pdf")
+
+    if uploaded_file is not None:
+        if st.session_state.get('last_uploaded_filename') != uploaded_file.name:
+            st.session_state.last_uploaded_filename = uploaded_file.name
+            parsed_data, logs = parse_pdf_report(uploaded_file)
+            st.session_state.logs = logs
+            if parsed_data:
+                for key, value in parsed_data.items():
+                    st.session_state[f"inp_{key}"] = value
+                run_analysis()
+                st.rerun()
+
+    st.subheader("Состав рациона (кг СВ):")
+    st.button("Сбросить изменения", use_container_width=True, on_click=reset_app_state)
+    st.markdown("**Сильно влияющие компоненты**")
+    for key in strong_influencers:
+        st.number_input(key, min_value=0.0, step=0.1, format="%.2f",
+                        key=f"inp_{key}", on_change=run_analysis)
+
+    st.markdown("**Прочие компоненты**")
+    for key in weak_influencers:
+        st.number_input(key, min_value=0.0, step=0.1, format="%.2f",
+                        key=f"inp_{key}", on_change=run_analysis)
+
+# --- Основной экран ---
+if st.session_state.logs:
+    with st.expander("📝 Логи разбора PDF-файла", expanded=False):
+        st.code("\n".join(st.session_state.logs), language='text')
+
+if not st.session_state.analysis_run:
+    st.info("Введите данные в панели слева или загрузите PDF-отчет для начала анализа.")
+else:
+    st.subheader("Рацион")
+    st.markdown(style_css(FONT), unsafe_allow_html=True)
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        current_inputs = get_current_inputs()
+        pie_data = {k: v for k, v in current_inputs.items() if v > 0}
+        if pie_data:
+            st.plotly_chart(build_pie_figure(pie_data, FONT), use_container_width=True)
+        else:
+            st.info("Нет данных для отображения структуры рациона.")
+
+    with col2:
+        total_sv = st.session_state.total_sv
+        st.metric(label="Сумма СВ кг/день", value=f"{total_sv:.2f}")
+        if total_sv < SV_BOUNDS[0]:
+            st.error(f"🔴 Общее количество СВ ниже нормы (< {SV_BOUNDS[0]:.0f} кг). Рекомендуется увеличить объем рациона.")
+        elif total_sv > SV_BOUNDS[1]:
+            st.error(f"🔴 Общее количество СВ выше нормы (> {SV_BOUNDS[1]:.0f} кг). Рекомендуется снизить объем рациона.")
+        else:
+            st.success("🟢 Общее количество СВ в норме.")
+
+    st.markdown("---")
+    preds = st.session_state.predictions
+    st.subheader("Прогноз по жирным кислотам")
+    cols = st.columns(len(preds))
+    for i, (acid_name, data) in enumerate(preds.items()):
+        cols[i].metric(
+            label=f"{acid_name} ({data['status']})",
+            value=f"{data['mean']:.2f}%",
+            help=f"Цель: {data['target']}. 95% ДИ: {data['ci_lower']:.2f}%–{data['ci_upper']:.2f}%"
+        )
+
+    # --- Рекомендации ---
+    if st.session_state.any_deviations:
+        base_inputs = get_current_inputs()
+        df_sens_use = sensitivities_matrix(models, base_inputs, step=0.5)
+
+        measures, heavy = build_measures(
+            preds=preds,
+            sens_df=df_sens_use,
+            base_inputs=base_inputs,
+            sv_bounds=SV_BOUNDS,
+            sv_margin=SV_MARGIN,
+            top_k=3
+        )
+
+        def fmt_list(lst, heavy_set):
+            if not lst:
+                return "—"
+            return ", ".join([f"**{c}**" if c in heavy_set else c for c in lst])
+
+        md_lines = []
+        for acid, payload in measures.items():
+            inc_str = fmt_list(payload["inc"], heavy["inc"])
+            dec_str = fmt_list(payload["dec"], heavy["dec"])
+            md_lines.append(
+                f"- **{acid}**: {payload['status']}. Возможные меры:  \n"
+                f"  - Увеличить: {inc_str}  \n"
+                f"  - Уменьшить: {dec_str}"
+            )
+        st.warning("\n".join(md_lines))
+
+    # --- Большой график ---
+    st.plotly_chart(build_acids_bar_figure(preds, FONT), use_container_width=True)
+
+# --- Интерпретация ---
+st.markdown("---")
+with st.expander("🔍 Интерпретация (Δ п.п. на +1 кг компонента)", expanded=False):
+    step_val = 0.5
+    base_inputs = get_current_inputs()
+    df_sens = sensitivities_matrix(models, base_inputs, step=step_val)
+    st.session_state['sens_matrix_last'] = df_sens
+    st.dataframe(df_sens.round(3), use_container_width=True)
+    st.caption("Положительное значение → при увеличении компонента кислота растёт; "
+               "отрицательное → падает. Единицы: процентные пункты на +1 кг компонента.")
