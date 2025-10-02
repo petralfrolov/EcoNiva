@@ -510,6 +510,10 @@ else:
             marker_color=p['color'],
             error_x=dict(type='data', symmetric=False, array=[p['ci_upper'] - p['mean']],
                          arrayminus=[p['mean'] - p['ci_lower']], thickness=3, width=6),
+            hovertemplate=(
+                f"{acid_name}: {p['mean']:.2f}%<br>"
+                f"95% ДИ: {p['ci_lower']:.2f}% – {p['ci_upper']:.2f}%<extra></extra>"
+            )
             # text=f"{p['mean']:.2f}%",
             # textposition='auto'
         ))
