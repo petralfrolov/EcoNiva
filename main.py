@@ -306,6 +306,137 @@ def load_models_and_get_influencers(paths: dict):
     weak_list = sorted([c for c in all_components if c not in strong_components])
     return models, strong_list, weak_list
 
+# === ИНТЕРПРЕТАЦИЯ И МЕРЫ ===
+
+def _predict_acid(acid_name: str, inputs_dict: dict) -> float:
+    pack = models[acid_name]
+    X = engineer_features(inputs_dict)[pack['features']]
+    if pack.get('add_constant', True):
+        X = sm.add_constant(X, has_constant='add')
+    sf = pack['model'].get_prediction(X).summary_frame(alpha=0.05)
+    return float(sf['mean'].iloc[0])
+
+def local_sensitivities(acid_name: str, base_inputs: dict, step: float = 0.5) -> dict:
+    base = _predict_acid(acid_name, base_inputs)
+    sens = {}
+    for comp in FEED_MAP.keys():
+        x2 = dict(base_inputs)
+        x2[comp] = max(0.0, x2[comp] + step)
+        p2 = _predict_acid(acid_name, x2)
+        sens[comp] = (p2 - base) / step  # п.п. на +1 кг
+    return sens  # без сортировки — матрица сама отсортирует строки
+
+def sensitivities_matrix(base_inputs: dict, step: float = 0.5) -> pd.DataFrame:
+    acids = list(models.keys())
+    comps = list(FEED_MAP.keys())
+    data = {acid: {} for acid in acids}
+    for acid in acids:
+        s = local_sensitivities(acid, base_inputs, step=step)
+        for comp in comps:
+            data[acid][comp] = s.get(comp, 0.0)
+    return pd.DataFrame(data, index=comps)
+
+def get_sens_matrix_cached(base_inputs: dict, step: float = 0.5) -> pd.DataFrame:
+    df = st.session_state.get('sens_matrix_last', None)
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        return df
+    df = sensitivities_matrix(base_inputs, step=step)
+    st.session_state['sens_matrix_last'] = df
+    return df
+
+def _total_sv(inputs: dict) -> float:
+    return float(sum(inputs.values()))
+
+def build_measures(preds: dict,
+                   sens_df: pd.DataFrame,
+                   base_inputs: dict,
+                   sv_bounds: tuple[float, float] = (15.0, 30.0),
+                   sv_margin: float = 0.5,
+                   top_k: int = 3,
+                   tol: float = 1e-6) -> dict:
+    """
+    Возвращает:
+      measures: {acid: {"status":..., "inc":[...], "dec":[...]}}
+      heavy: {"inc": set(...), "dec": set(...)} — компоненты, актуальные ≥ для 2 кислот
+
+    Направление:
+      - mean < lo - tol  → тянуть ВВЕРХ
+      - mean > hi + tol  → тянуть ВНИЗ
+      - lo - tol ≤ mean ≤ hi + tol → тянуть к ЦЕНТРУ ( (lo+hi)/2 )
+    Ограничения:
+      - не предлагать уменьшать компонент, если он уже 0;
+      - если ΣСВ ≥ sv_max - sv_margin → не предлагать увеличения;
+        если ΣСВ ≤ sv_min + sv_margin → не предлагать уменьшения.
+    """
+    def _total_sv(x: dict) -> float: return float(sum(x.values()))
+
+    sv = _total_sv(base_inputs)
+    sv_min, sv_max = sv_bounds
+    allow_inc_global = sv < (sv_max - sv_margin)
+    allow_dec_global = sv > (sv_min + sv_margin)
+
+    measures = {}
+    all_inc, all_dec = [], []
+
+    for acid, d in preds.items():
+        status = d['status']
+        mean = d['mean']
+        lo, hi = d['target_min'], d['target_max']
+        if '🟢' in status:
+            continue  # в норме — мер не даём
+
+        col = sens_df[acid]
+        center = 0.5 * (lo + hi)
+
+        # определяем нужное направление
+        if mean < lo - tol:
+            need_up = True
+        elif mean > hi + tol:
+            need_up = False
+        else:
+            # внутри коридора (в т.ч. 🟡 из-за ДИ): тянем к центру
+            need_up = mean < center
+
+        # кандидаты по знаку чувствительности
+        if need_up:
+            # чтобы поднять кислоту: УВЕЛИЧИВАТЬ sens>0; УМЕНЬШАТЬ sens<0
+            inc_candidates = col[col > 0].sort_values(ascending=False)
+            dec_candidates = col[col < 0].abs().sort_values(ascending=False)
+        else:
+            # чтобы опустить кислоту: УМЕНЬШАТЬ sens>0; УВЕЛИЧИВАТЬ sens<0
+            dec_candidates = col[col > 0].sort_values(ascending=False)
+            inc_candidates = col[col < 0].abs().sort_values(ascending=False)
+
+        # применяем глобальные ограничения ΣСВ и нулевые компоненты
+        inc_list = []
+        if allow_inc_global:
+            for comp in inc_candidates.index:
+                inc_list.append(comp)
+                if len(inc_list) >= top_k: break
+
+        dec_list = []
+        if allow_dec_global:
+            for comp in dec_candidates.index:
+                if base_inputs.get(comp, 0.0) > 0.0:  # нельзя уменьшать ниже нуля
+                    dec_list.append(comp)
+                if len(dec_list) >= top_k: break
+
+        measures[acid] = {"status": status, "inc": inc_list, "dec": dec_list}
+        all_inc.extend(inc_list)
+        all_dec.extend(dec_list)
+
+    # компоненты, попавшие в меры ≥ для 2 кислот — выделяем жирным
+    from collections import Counter
+    inc_count = Counter(all_inc)
+    dec_count = Counter(all_dec)
+    heavy = {
+        "inc": {c for c, n in inc_count.items() if n >= 2},
+        "dec": {c for c, n in dec_count.items() if n >= 2},
+    }
+    return measures, heavy
+
+
+
 
 # --- ИНТЕРФЕЙС ПРИЛОЖЕНИЯ ---
 
@@ -400,7 +531,7 @@ with st.sidebar:
         st.number_input(key, min_value=0.0, step=0.1, format="%.2f", key=f"inp_{key}", on_change=run_analysis)
 
 # --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ---
-st.title("🐄 Аналитический дашборд")
+# st.title("🐄 Аналитический дашборд")
 
 if st.session_state.logs:
     with st.expander("📝 Логи разбора PDF-файла", expanded=False):
@@ -477,10 +608,39 @@ else:
             label=f"{acid_name} ({data['status']})", value=f"{data['mean']:.2f}%",
             help=f"Цель: {data['target']}. 95% ДИ: {data['ci_lower']:.2f}%–{data['ci_upper']:.2f}%"
         )
+
+    # === РЕКОМЕНДАЦИИ: форматированный Markdown со строками-переносами ===
     if st.session_state.any_deviations:
-        recs = [f"**{acid}**: {data['status']}. Проверьте влияние связанных компонентов." for acid, data in
-                preds.items() if "🟢" not in data['status']]
-        st.warning("\n".join(f"* {rec}" for rec in recs))
+        df_sens_use = get_sens_matrix_cached(st.session_state.current_inputs, step=0.5)
+
+        measures, heavy = build_measures(
+            preds=preds,
+            sens_df=df_sens_use,
+            base_inputs=st.session_state.current_inputs,
+            sv_bounds=(15.0, 30.0),
+            sv_margin=0.5,
+            top_k=3
+        )
+
+        def fmt_list(lst, heavy_set):
+            if not lst:
+                return "—"
+            return ", ".join([f"**{c}**" if c in heavy_set else c for c in lst])
+
+        md_lines = []
+        for acid, payload in measures.items():
+            lo, hi = TARGET_RANGES[acid]
+            inc_str = fmt_list(payload["inc"], heavy["inc"])
+            dec_str = fmt_list(payload["dec"], heavy["dec"])
+            # ВСЕГДА «увеличить» сначала, затем «уменьшить»
+            md_lines.append(
+                f"- **{acid}**: {payload['status']}. Возможные меры:  \n"
+                f"  - Увеличить: {inc_str}  \n"
+                f"  - Уменьшить: {dec_str}"
+            )
+
+        # желтый бокс + переносы строк за счёт двойных пробелов + \n
+        st.warning("\n".join(md_lines))
 
     # --- ИСПРАВЛЕННЫЙ БЛОК ВИЗУАЛИЗАЦИИ ---
     fig = go.Figure()
@@ -537,7 +697,8 @@ else:
         x=mean_values,
         mode='markers',
         marker=dict(color='black', size=8, symbol='diamond'),
-        showlegend=False
+        showlegend=False,
+        hovertemplate=()
     ))
 
     # --- Легенда (прокси-трейсы) ---
@@ -593,3 +754,14 @@ else:
     fig.update_yaxes(showgrid=False)
 
     st.plotly_chart(fig, use_container_width=True)
+
+# === ИНТЕРПРЕТАЦИЯ (автоматически) ===
+st.markdown("---")
+with st.expander("🔍 Интерпретация (Δ п.п. на +1 кг компонента)", expanded=False):
+    step_val = 0.5  # можно вынести в слайдер выше по странице, если нужно управлять
+    base_inputs = st.session_state.current_inputs
+    df_sens = sensitivities_matrix(base_inputs, step=step_val)
+    st.session_state['sens_matrix_last'] = df_sens  # кэш на сессию
+    st.dataframe(df_sens.round(3), use_container_width=True)
+    st.caption("Положительное значение → при увеличении компонента кислота растёт; "
+               "отрицательное → падает. Единицы: процентные пункты на +1 кг компонента.")
