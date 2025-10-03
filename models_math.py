@@ -8,6 +8,7 @@ from config import (
     FEATURE_TO_COMPONENT_MAP, FEED_MAP, TARGET_RANGES
 )
 
+
 # --- Фичи ---
 @st.cache_data
 def engineer_features(manual_inputs: dict):
@@ -34,13 +35,14 @@ def engineer_features(manual_inputs: dict):
     df['Sum_prot'] = df['Sum_prot_ex'] + df['Sum_prot_pr']
 
     df['share_kukur'] = np.where(df['Sum_conc'] > 0, df['Кукуруза'] / (df['Sum_conc'] + eps), 0.0)
-    df['share_korn']  = np.where(df['Sum_conc'] > 0, df['Корнаж_ЗСК'] / (df['Sum_conc'] + eps), 0.0)
-    df['share_zern']  = np.where(df['Sum_conc'] > 0, df['Зерновые_прочие'] / (df['Sum_conc'] + eps), 0.0)
+    df['share_korn'] = np.where(df['Sum_conc'] > 0, df['Корнаж_ЗСК'] / (df['Sum_conc'] + eps), 0.0)
+    df['share_zern'] = np.where(df['Sum_conc'] > 0, df['Зерновые_прочие'] / (df['Sum_conc'] + eps), 0.0)
     df['share_soloma'] = np.where(df['Sum_rough'] > 0, df['Солома'] / (df['Sum_rough'] + eps), 0.0)
-    df['share_prot_soy']  = np.where(df['Sum_prot'] > 0, df['Шрот_соевый'] / (df['Sum_prot'] + eps), 0.0)
+    df['share_prot_soy'] = np.where(df['Sum_prot'] > 0, df['Шрот_соевый'] / (df['Sum_prot'] + eps), 0.0)
     df['share_prot_raps'] = np.where(df['Sum_prot'] > 0, df['Шрот_рапсовый'] / (df['Sum_prot'] + eps), 0.0)
-    df['share_prot_lin']  = np.where(df['Sum_prot'] > 0, df['Жмых_льняной'] / (df['Sum_prot'] + eps), 0.0)
+    df['share_prot_lin'] = np.where(df['Sum_prot'] > 0, df['Жмых_льняной'] / (df['Sum_prot'] + eps), 0.0)
     return df
+
 
 # --- Загрузка моделей + выделение сильных компонентов ---
 @st.cache_resource
@@ -63,19 +65,21 @@ def load_models_and_get_influencers(paths: dict):
 
     all_components = list(FEED_MAP.keys())
     strong_list = sorted([c for c in all_components if c in strong_components])
-    weak_list   = sorted([c for c in all_components if c not in strong_components])
+    weak_list = sorted([c for c in all_components if c not in strong_components])
     return models, strong_list, weak_list
+
 
 # --- Прогнозы по кислотам ---
 def _predict_pack(model_pack: dict, inputs_dict: dict):
-    X = engineer_features(inputs_dict)[model_pack['features']]
+    x = engineer_features(inputs_dict)[model_pack['features']]
     if model_pack.get('add_constant', True):
-        X = sm.add_constant(X, has_constant='add')
-    sf = model_pack['model'].get_prediction(X).summary_frame(alpha=0.05)
+        x = sm.add_constant(x, has_constant='add')
+    sf = model_pack['model'].get_prediction(x).summary_frame(alpha=0.05)
     mean = float(max(0.0, sf['mean'].iloc[0]))
-    lo   = float(max(0.0, sf['mean_ci_lower'].iloc[0]))
-    hi   = float(max(0.0, sf['mean_ci_upper'].iloc[0]))
+    lo = float(max(0.0, sf['mean_ci_lower'].iloc[0]))
+    hi = float(max(0.0, sf['mean_ci_upper'].iloc[0]))
     return mean, lo, hi
+
 
 def predict_all_acids(models: dict, inputs_dict: dict, target_ranges: dict):
     predictions = {}
@@ -88,9 +92,13 @@ def predict_all_acids(models: dict, inputs_dict: dict, target_ranges: dict):
         color = '#2ca02c'
         status = "🟢 Норма"
         if mean < t_min or mean > t_max:
-            status = "🔴 Вне нормы"; any_deviations = True; color = '#d62728'
+            status = "🔴 Вне нормы"
+            any_deviations = True
+            color = '#d62728'
         elif ci_low < t_min or ci_up > t_max:
-            status = "🟡 Риск отклонения"; any_deviations = True; color = '#ff7f0e'
+            status = "🟡 Риск отклонения"
+            any_deviations = True
+            color = '#ff7f0e'
 
         predictions[acid_name] = {
             "mean": mean, "ci_lower": ci_low, "ci_upper": ci_up,
@@ -99,6 +107,7 @@ def predict_all_acids(models: dict, inputs_dict: dict, target_ranges: dict):
             "status": status, "color": color
         }
     return predictions, any_deviations
+
 
 # --- Чувствительности ---
 def local_sensitivities(acid_name: str, models: dict, base_inputs: dict, step: float = 0.5) -> dict:
@@ -111,6 +120,7 @@ def local_sensitivities(acid_name: str, models: dict, base_inputs: dict, step: f
         sens[comp] = (m2 - base_mean) / step
     return sens
 
+
 def sensitivities_matrix(models: dict, base_inputs: dict, step: float = 0.5) -> pd.DataFrame:
     acids = list(models.keys())
     comps = list(FEED_MAP.keys())
@@ -121,9 +131,11 @@ def sensitivities_matrix(models: dict, base_inputs: dict, step: float = 0.5) -> 
             data[acid][comp] = s.get(comp, 0.0)
     return pd.DataFrame(data, index=comps)
 
+
 # --- Меры регулирования ---
 def _total_sv(inputs: dict) -> float:
     return float(sum(inputs.values()))
+
 
 def build_measures(preds: dict, sens_df: pd.DataFrame, base_inputs: dict,
                    sv_bounds=(15.0, 30.0), sv_margin: float = 0.5, top_k: int = 3, tol: float = 1e-6):

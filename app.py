@@ -1,6 +1,4 @@
 import streamlit as st
-import numpy as np
-import pandas as pd
 
 from config import (
     PAGE_TITLE, FONT, SV_BOUNDS, SV_MARGIN,
@@ -8,7 +6,7 @@ from config import (
 )
 from io_parsing import parse_pdf_report
 from models_math import (
-    engineer_features, load_models_and_get_influencers,
+    load_models_and_get_influencers,
     predict_all_acids, sensitivities_matrix, build_measures
 )
 from visuals import style_css, build_pie_figure, build_acids_bar_figure
@@ -16,11 +14,13 @@ from visuals import style_css, build_pie_figure, build_acids_bar_figure
 # --- Конфигурация страницы ---
 st.set_page_config(layout="wide", page_title=PAGE_TITLE)
 
+
 # --- Хелперы состояния ---
 def get_current_inputs():
     if 'current_inputs' in st.session_state:
         return st.session_state.current_inputs
     return {k: st.session_state.get(f"inp_{k}", 0.0) for k in FEED_MAP.keys()}
+
 
 def reset_app_state():
     for key in FEED_MAP.keys():
@@ -31,6 +31,7 @@ def reset_app_state():
     if 'current_inputs' in st.session_state:
         del st.session_state['current_inputs']
 
+
 def run_analysis():
     current_inputs = {key: st.session_state[f"inp_{key}"] for key in FEED_MAP.keys()}
     st.session_state.current_inputs = current_inputs
@@ -39,6 +40,7 @@ def run_analysis():
     st.session_state.predictions = preds
     st.session_state.any_deviations = any_deviations
     st.session_state.analysis_run = True
+
 
 # --- Инициализация состояния ---
 if 'analysis_run' not in st.session_state:
@@ -110,9 +112,11 @@ else:
         total_sv = st.session_state.total_sv
         st.metric(label="Сумма СВ кг/день", value=f"{total_sv:.2f}")
         if total_sv < SV_BOUNDS[0]:
-            st.error(f"🔴 Общее количество СВ ниже нормы (< {SV_BOUNDS[0]:.0f} кг). Рекомендуется увеличить объем рациона.")
+            st.error(
+                f"🔴 Общее количество СВ ниже нормы (< {SV_BOUNDS[0]:.0f} кг). Рекомендуется увеличить объем рациона.")
         elif total_sv > SV_BOUNDS[1]:
-            st.error(f"🔴 Общее количество СВ выше нормы (> {SV_BOUNDS[1]:.0f} кг). Рекомендуется снизить объем рациона.")
+            st.error(
+                f"🔴 Общее количество СВ выше нормы (> {SV_BOUNDS[1]:.0f} кг). Рекомендуется снизить объем рациона.")
         else:
             st.success("🟢 Общее количество СВ в норме.")
 
@@ -141,10 +145,12 @@ else:
             top_k=3
         )
 
+
         def fmt_list(lst, heavy_set):
             if not lst:
                 return "—"
             return ", ".join([f"**{c}**" if c in heavy_set else c for c in lst])
+
 
         md_lines = []
         for acid, payload in measures.items():
@@ -160,13 +166,13 @@ else:
     # --- Большой график ---
     st.plotly_chart(build_acids_bar_figure(preds, FONT), use_container_width=True)
 
-# --- Интерпретация ---
-st.markdown("---")
-with st.expander("🔍 Интерпретация (Δ п.п. на +1 кг компонента)", expanded=False):
-    step_val = 0.5
-    base_inputs = get_current_inputs()
-    df_sens = sensitivities_matrix(models, base_inputs, step=step_val)
-    st.session_state['sens_matrix_last'] = df_sens
-    st.dataframe(df_sens.round(3), use_container_width=True)
-    st.caption("Положительное значение → при увеличении компонента кислота растёт; "
-               "отрицательное → падает. Единицы: процентные пункты на +1 кг компонента.")
+    # --- Интерпретация ---
+    st.markdown("---")
+    with st.expander("🔍 Интерпретация (Δ п.п. на +1 кг компонента)", expanded=False):
+        step_val = 0.5
+        base_inputs = get_current_inputs()
+        df_sens = sensitivities_matrix(models, base_inputs, step=step_val)
+        st.session_state['sens_matrix_last'] = df_sens
+        st.dataframe(df_sens.round(3), use_container_width=True)
+        st.caption("Положительное значение → при увеличении компонента кислота растёт; "
+                   "отрицательное → падает. Единицы: процентные пункты на +1 кг компонента.")

@@ -3,6 +3,7 @@ import pandas as pd
 import pdfplumber
 from config import FEED_MAP
 
+
 @st.cache_data
 def parse_pdf_report(uploaded_file):
     logs = []
@@ -56,7 +57,8 @@ def parse_pdf_report(uploaded_file):
             if any(name.strip().lower() in row['clean_name'].lower() for name in names):
                 aggregated_data[category] += row[sv_kg_col]
                 logs.append(
-                    f"Строка {index + 1}: '{row[ingredient_col]}' -> '{row['clean_name']}' -> ✓ '{category}' ({row[sv_kg_col]:.2f} кг)")
+                    f"Строка {index + 1}: '{row[ingredient_col]}' -> '{row['clean_name']}' "
+                    f"-> ✓ '{category}' ({row[sv_kg_col]:.2f} кг)")
                 match_found = True
                 break
         if not match_found:

@@ -1,5 +1,6 @@
 import plotly.graph_objects as go
 
+
 def style_css(font_size=16) -> str:
     return f"""
     <style>
@@ -14,6 +15,7 @@ def style_css(font_size=16) -> str:
     .block-container p, .stAlert {{ font-size: 1rem; }}
     </style>
     """
+
 
 def build_pie_figure(pie_data: dict, font: int = 16) -> go.Figure:
     fig = go.Figure(data=[go.Pie(
@@ -32,6 +34,7 @@ def build_pie_figure(pie_data: dict, font: int = 16) -> go.Figure:
         hoverlabel=dict(font=dict(size=font))
     )
     return fig
+
 
 def build_acids_bar_figure(preds: dict, font: int = 16) -> go.Figure:
     fig = go.Figure()
