@@ -134,7 +134,7 @@ with st.sidebar:
 
     st.subheader("Состав рациона (кг СВ):")
     st.button("Сбросить изменения", use_container_width=True, on_click=reset_app_state)
-    st.button("Снять все замки", use_container_width=True, on_click=unlock_all)
+    st.button("Разблокировать всё", use_container_width=True, on_click=unlock_all)
     st.button("Автоподбор", use_container_width=True, on_click=run_optimizer)
     render_group(all_components)
 

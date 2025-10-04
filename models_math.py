@@ -243,8 +243,8 @@ def optimize_ration(models: dict,
                     sv_bounds=(15.0, 30.0),
                     step: float = 0.5,
                     lambda_l2: float = 1e-3,
-                    max_iter: int = 100,
-                    max_delta_per_iter: float = 0.1):
+                    max_iter: int = 10,
+                    max_delta_per_iter: float = 1):
     """
     Возвращает (new_inputs: dict, report: dict)
     """
@@ -318,7 +318,9 @@ def optimize_ration(models: dict,
         for a in acids:
             lo, hi = target_ranges[a]
             m = preds2[a]["mean"]
-            if not (lo <= m <= hi):
+            ci_lower_val = preds2[a]["ci_lower"]
+            ci_upper_val = preds2[a]["ci_upper"]
+            if not (ci_lower_val > lo and ci_upper_val < hi):
                 ok_all = False
                 out_list.append((a, m, lo, hi))
         if ok_all:
