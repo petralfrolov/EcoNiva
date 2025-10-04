@@ -36,6 +36,31 @@ def build_pie_figure(pie_data: dict, font: int = 16) -> go.Figure:
     return fig
 
 
+def build_treemap_figure(data: dict, font: int = 16) -> go.Figure:
+    """
+    Создает фигуру Treemap для визуализации структуры рациона.
+    """
+    total = sum(data.values())
+    labels = list(data.keys())
+    values = list(data.values())
+
+    fig = go.Figure(go.Treemap(
+        labels=labels,
+        values=values,
+        parents=[""] * len(labels),  # У всех один родитель - корень
+        textinfo="label+value+percent root",
+        marker_colorscale='Greens',
+    ))
+
+    fig.update_layout(
+        height=400,
+        margin=dict(l=10, r=10, t=10, b=10),
+        font=dict(size=font),
+        hoverlabel=dict(font=dict(size=font))
+    )
+    return fig
+
+
 def build_acids_bar_figure(preds: dict, font: int = 16) -> go.Figure:
     fig = go.Figure()
 
@@ -44,10 +69,10 @@ def build_acids_bar_figure(preds: dict, font: int = 16) -> go.Figure:
 
     rows_to_sort = []
     for acid_name, p in preds.items():
-        # Расчет отклонения от центра (как и раньше)
-        center = 0.5 * (p['target_min'] + p['target_max'])
-        span = max(p['target_max'] - p['target_min'], 1e-9)
-        delta_norm = abs(p['mean'] - center) / span
+        # # Расчет отклонения от центра (как и раньше)
+        # center = 0.5 * (p['target_min'] + p['target_max'])
+        # span = max(p['target_max'] - p['target_min'], 1e-9)
+        # delta_norm = abs(p['mean'] - center) / span
 
         # Получаем приоритет из статуса
         status_char = p['status'][0]
@@ -56,12 +81,17 @@ def build_acids_bar_figure(preds: dict, font: int = 16) -> go.Figure:
         rows_to_sort.append({
             "name": acid_name,
             "priority": priority,
-            "deviation": delta_norm
+            # "deviation": delta_norm,
+            "value": p['mean']
         })
 
     # Сортируем сначала по приоритету (0, 1, 2),
     # а затем внутри каждой группы - по убыванию отклонения
-    rows_to_sort.sort(key=lambda row: (row['priority'], -row['deviation']))
+    rows_to_sort.sort(key=lambda row: (
+        row['priority'],
+        # -row['deviation'],
+        -row['value']
+    ))
 
     # Извлекаем отсортированный список названий
     acid_names = [row['name'] for row in rows_to_sort]

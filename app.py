@@ -10,7 +10,7 @@ from models_math import (
     load_models_and_get_influencers,
     predict_all_acids, sensitivities_matrix, build_measures
 )
-from visuals import style_css, build_pie_figure, build_acids_bar_figure
+from visuals import style_css, build_pie_figure, build_acids_bar_figure, build_treemap_figure
 
 # --- Конфигурация страницы ---
 st.set_page_config(layout="wide", page_title=PAGE_TITLE)
@@ -154,7 +154,7 @@ else:
         current_inputs = get_current_inputs()
         pie_data = {k: v for k, v in current_inputs.items() if v > 0}
         if pie_data:
-            st.plotly_chart(build_pie_figure(pie_data, FONT), use_container_width=True)
+            st.plotly_chart(build_treemap_figure(pie_data, FONT), use_container_width=True)
         else:
             st.info("Нет данных для отображения структуры рациона.")
 
