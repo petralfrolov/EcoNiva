@@ -5,7 +5,7 @@ import pickle
 import statsmodels.api as sm
 
 from config import (
-    FEATURE_TO_COMPONENT_MAP, FEED_MAP, TARGET_RANGES
+    FEED_MAP, TARGET_RANGES
 )
 
 
@@ -58,15 +58,8 @@ def load_models_and_get_influencers(paths: dict):
             models[acid_name] = model_data
             all_model_features.update(model_data['features'])
 
-    strong_components = set()
-    for feature in all_model_features:
-        if feature in FEATURE_TO_COMPONENT_MAP:
-            strong_components.update(FEATURE_TO_COMPONENT_MAP[feature])
-
     all_components = list(FEED_MAP.keys())
-    strong_list = sorted([c for c in all_components if c in strong_components])
-    weak_list = sorted([c for c in all_components if c not in strong_components])
-    return models, strong_list, weak_list
+    return models, all_components
 
 
 # --- Прогнозы по кислотам ---

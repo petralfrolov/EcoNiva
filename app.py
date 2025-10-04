@@ -57,13 +57,32 @@ for key in FEED_MAP.keys():
         st.session_state[f"inp_{key}"] = 0.0
 
 # --- Загрузка моделей ---
-models, strong_influencers, weak_influencers = load_models_and_get_influencers(MODEL_PATHS)
+models, all_components = load_models_and_get_influencers(MODEL_PATHS)
 if models is None:
     st.stop()
 
+def render_group(keys: list[str]):
+    # сортируем: сначала активные, внутри — по убыванию значения
+    items = [(k, float(st.session_state.get(f"inp_{k}", 0.0))) for k in keys]
+    # сортировка: активные (v>0) первыми, ВНУТРИ — по алфавиту
+    items.sort(key=lambda kv: (kv[1] == 0.0, kv[0].lower()))
+
+    for k, v in items:
+        icon = "🟢" if v > 0 else "⚪"
+        st.number_input(
+            f"{icon} {k}",
+            min_value=0.0,
+            step=0.1,
+            format="%.2f",
+            key=f"inp_{k}",
+            on_change=run_analysis
+        )
+
+    st.caption("🟢 — компонент задан (значение > 0); ⚪ — ноль.")
+
 # --- Сайдбар ---
 with st.sidebar:
-    st.header("⚙️ Параметры рациона")
+    st.header("Параметры рациона")
     uploaded_file = st.file_uploader("Загрузите рацион (PDF или Excel)", type=["pdf", "xlsx", "xls"])
 
     if uploaded_file is not None:
@@ -79,15 +98,7 @@ with st.sidebar:
 
     st.subheader("Состав рациона (кг СВ):")
     st.button("Сбросить изменения", use_container_width=True, on_click=reset_app_state)
-    st.markdown("**Сильно влияющие компоненты**")
-    for key in strong_influencers:
-        st.number_input(key, min_value=0.0, step=0.1, format="%.2f",
-                        key=f"inp_{key}", on_change=run_analysis)
-
-    st.markdown("**Прочие компоненты**")
-    for key in weak_influencers:
-        st.number_input(key, min_value=0.0, step=0.1, format="%.2f",
-                        key=f"inp_{key}", on_change=run_analysis)
+    render_group(all_components)
 
 # --- Основной экран ---
 if st.session_state.logs:
@@ -169,20 +180,20 @@ else:
 
     # --- Интерпретация ---
     st.markdown("---")
-    with st.expander("🔍 Интерпретация (Δ п.п. на +1 кг компонента)", expanded=True):
-        step_val = 0.5
-        base_inputs = get_current_inputs()
-        df_sens = sensitivities_matrix(models, base_inputs, step=step_val)
-        st.session_state['sens_matrix_last'] = df_sens
+    st.subheader("Интерпретация (изменение кислоты в % на +1 кг компонента)")
+    step_val = 0.5
+    base_inputs = get_current_inputs()
+    df_sens = sensitivities_matrix(models, base_inputs, step=step_val)
+    st.session_state['sens_matrix_last'] = df_sens
 
-        # --- ЦВЕТА: красный для +, синий для - (белый около нуля) ---
-        M = float(np.nanmax(np.abs(df_sens.values))) or 1.0  # защита от деления на 0
-        styled = (df_sens
-                  .style
-                  .background_gradient(cmap="bwr", vmin=-M, vmax=M, axis=None)
-                  .format("{:.3f}"))
+    # --- ЦВЕТА: красный для +, синий для - (белый около нуля) ---
+    M = float(np.nanmax(np.abs(df_sens.values))) or 1.0  # защита от деления на 0
+    styled = (df_sens
+              .style
+              .background_gradient(cmap="bwr", vmin=-M, vmax=M, axis=None)
+              .format("{:.3f}"))
 
-        st.dataframe(styled, use_container_width=True)
-        st.caption(
-            "Цвет: красный — положительное влияние (рост кислоты при +1 кг), синий — отрицательное. Насыщенность ∝ |значению|.")
+    st.dataframe(styled, use_container_width=True)
+    st.caption(
+        "Цвет: красный — положительное влияние (рост кислоты при +1 кг), синий — отрицательное. Насыщенность ∝ |значению|.")
 
