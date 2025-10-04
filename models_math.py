@@ -191,3 +191,162 @@ def build_measures(preds: dict, sens_df: pd.DataFrame, base_inputs: dict,
         "dec": {c for c, n in dec_count.items() if n >= 2},
     }
     return measures, heavy
+
+
+def _targets_and_weights(preds: dict, target_ranges: dict):
+    acids = list(preds.keys())
+    centers = []
+    weights = []
+    for a in acids:
+        lo, hi = target_ranges[a]
+        c = 0.5 * (lo + hi)
+        centers.append(c)
+
+        st_label = preds[a]["status"]
+        mean_val = preds[a]["mean"]  # Получаем текущее среднее значение
+
+        # НОВОЕ ПРАВИЛО: Если мы уже в зеленой зоне, не трогаем
+        if "🟢" in st_label and lo <= mean_val <= hi:
+            w = 0.0  # Вес равен нулю, цель достигнута
+        elif "🔴" in st_label:
+            w = 3.0
+        elif "🟡" in st_label:
+            w = 1.5
+        else:
+            w = 0.5  # Для случаев, когда статус зеленый, но мы на самой границе
+        weights.append(w)
+
+    return np.array(centers, float), np.array(weights, float), acids
+
+def _enforce_sv_bounds(x: np.ndarray, free_mask: np.ndarray, sv_min: float, sv_max: float):
+    s = float(x.sum())
+    if s > sv_max:
+        over = s - sv_max
+        free_sum = float(x[free_mask].sum())
+        if free_sum > 0:
+            factor = max((free_sum - over) / free_sum, 0.0)
+            x[free_mask] *= factor
+    elif s < sv_min:
+        deficit = sv_min - s
+        # распределяем дефицит пропорционально текущим массам + 1 (чтоб нули тоже росли)
+        w = x[free_mask] + 1.0
+        wsum = float(w.sum())
+        if wsum > 0:
+            x[free_mask] += deficit * (w / wsum)
+    x[x < 0] = 0.0
+    return x
+
+def optimize_ration(models: dict,
+                    base_inputs: dict,
+                    target_ranges: dict,
+                    locks: set[str] | None = None,
+                    sv_bounds=(15.0, 30.0),
+                    step: float = 0.5,
+                    lambda_l2: float = 1e-3,
+                    max_iter: int = 100,
+                    max_delta_per_iter: float = 0.1):
+    """
+    Возвращает (new_inputs: dict, report: dict)
+    """
+    locks = locks or set()
+    comps = list(FEED_MAP.keys())
+    acids = list(models.keys())
+
+    x = np.array([float(base_inputs.get(c, 0.0)) for c in comps], float)
+    free_mask = np.array([c not in locks for c in comps], dtype=bool)
+    if not free_mask.any():
+        return base_inputs, {"success": False, "reason": "Нет свободных переменных (все залочены)."}
+
+    history = []
+    for it in range(1, max_iter + 1):
+        # Текущие предсказания
+        cur_inputs_dict = {c: float(v) for c, v in zip(comps, x)}
+        preds, _ = predict_all_acids(models, cur_inputs_dict, target_ranges)
+        y = np.array([preds[a]["mean"] for a in acids], float)
+        centers, weights, acids_order = _targets_and_weights(preds, target_ranges)
+        r = centers - y  # куда хотим сдвинуть
+
+        # Якоби: dY/dX (acids x comps)
+        J_df = sensitivities_matrix(models, cur_inputs_dict, step=step).T
+        # гарантируем порядок
+        J_df = J_df.reindex(index=acids, columns=comps)
+        J = J_df.to_numpy(dtype=float)
+
+        # Оставляем только свободные колонки
+        A = J[:, free_mask]
+        if A.size == 0:
+            return cur_inputs_dict, {"success": False, "reason": "Нет свободных переменных."}
+
+        # Взвешивание по важности целей
+        w_sqrt = np.sqrt(weights)
+        Aw = (A.T * w_sqrt).T
+        rw = r * w_sqrt
+
+        # Ridge-LS: (A^T A + λI) Δ = A^T r
+        ATA = Aw.T @ Aw
+        ATb = Aw.T @ rw
+        ATA.flat[::ATA.shape[0]+1] += lambda_l2  # +λI на диагональ
+        try:
+            delta_free = np.linalg.solve(ATA, ATb)
+        except np.linalg.LinAlgError:
+            delta_free, *_ = np.linalg.lstsq(ATA, ATb, rcond=None)
+
+        # Ограничение шага за итерацию
+        delta_free = np.clip(delta_free, -max_delta_per_iter, max_delta_per_iter)
+
+        # Собираем полный вектор Δx
+        delta = np.zeros_like(x)
+        delta[free_mask] = delta_free
+
+        # Применяем и проекции ограничений
+        x = x + delta
+        x[x < 0] = 0.0
+        x = _enforce_sv_bounds(x, free_mask, sv_bounds[0], sv_bounds[1])
+
+        # Сохраняем прогресс
+        history.append({
+            "iter": it,
+            "resid_norm": float(np.linalg.norm(r, 2)),
+            "sum_sv": float(x.sum())
+        })
+
+        # Проверка «зелёной зоны»
+        cur_inputs_dict = {c: float(v) for c, v in zip(comps, x)}
+        preds2, _ = predict_all_acids(models, cur_inputs_dict, target_ranges)
+        ok_all = True
+        out_list = []
+        for a in acids:
+            lo, hi = target_ranges[a]
+            m = preds2[a]["mean"]
+            if not (lo <= m <= hi):
+                ok_all = False
+                out_list.append((a, m, lo, hi))
+        if ok_all:
+            base_vec = np.array([float(base_inputs.get(c, 0.0)) for c in comps], float)
+            return cur_inputs_dict, {
+                "success": True,
+                "iterations": it,
+                "delta_total": float((x - base_vec).sum()),
+                "deltas": {c: float(xi - bi) for c, xi, bi in zip(comps, x, base_vec)},
+                "history": history,
+                "out_of_range": []
+            }
+
+    # Если не уложились, возвращаем лучшее найденное
+    base_vec = np.array([float(base_inputs.get(c, 0.0)) for c in comps], float)
+    cur_inputs_dict = {c: float(v) for c, v in zip(comps, x)}
+    preds2, _ = predict_all_acids(models, cur_inputs_dict, target_ranges)
+    out_list = []
+    for a in acids:
+        lo, hi = target_ranges[a]
+        m = preds2[a]["mean"]
+        if not (lo <= m <= hi):
+            out_list.append((a, m, lo, hi))
+    return cur_inputs_dict, {
+        "success": False,
+        "iterations": max_iter,
+        "delta_total": float((x - base_vec).sum()),
+        "deltas": {c: float(xi - bi) for c, xi, bi in zip(comps, x, base_vec)},
+        "history": history,
+        "out_of_range": out_list
+    }

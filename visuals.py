@@ -39,15 +39,32 @@ def build_pie_figure(pie_data: dict, font: int = 16) -> go.Figure:
 def build_acids_bar_figure(preds: dict, font: int = 16) -> go.Figure:
     fig = go.Figure()
 
-    rows = []
+    # Карта для определения приоритета статуса (0 - самый высокий)
+    status_priority = {"🔴": 0, "🟡": 1, "🟢": 2}
+
+    rows_to_sort = []
     for acid_name, p in preds.items():
+        # Расчет отклонения от центра (как и раньше)
         center = 0.5 * (p['target_min'] + p['target_max'])
         span = max(p['target_max'] - p['target_min'], 1e-9)
         delta_norm = abs(p['mean'] - center) / span
-        rows.append((acid_name, delta_norm))
 
-    rows.sort(key=lambda x: x[1], reverse=True)
-    acid_names = [name for name, _ in rows]
+        # Получаем приоритет из статуса
+        status_char = p['status'][0]
+        priority = status_priority.get(status_char, 2)  # По умолчанию - низший приоритет
+
+        rows_to_sort.append({
+            "name": acid_name,
+            "priority": priority,
+            "deviation": delta_norm
+        })
+
+    # Сортируем сначала по приоритету (0, 1, 2),
+    # а затем внутри каждой группы - по убыванию отклонения
+    rows_to_sort.sort(key=lambda row: (row['priority'], -row['deviation']))
+
+    # Извлекаем отсортированный список названий
+    acid_names = [row['name'] for row in rows_to_sort]
     mean_values = [preds[name]['mean'] for name in acid_names]
 
     for acid_name in reversed(acid_names):

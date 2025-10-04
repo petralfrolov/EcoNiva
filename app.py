@@ -64,21 +64,48 @@ if models is None:
 def render_group(keys: list[str]):
     # сортируем: сначала активные, внутри — по убыванию значения
     items = [(k, float(st.session_state.get(f"inp_{k}", 0.0))) for k in keys]
-    # сортировка: активные (v>0) первыми, ВНУТРИ — по алфавиту
+    # активные вверх, внутри — по алфавиту
     items.sort(key=lambda kv: (kv[1] == 0.0, kv[0].lower()))
 
     for k, v in items:
         icon = "🟢" if v > 0 else "⚪"
-        st.number_input(
-            f"{icon} {k}",
-            min_value=0.0,
-            step=0.1,
-            format="%.2f",
-            key=f"inp_{k}",
-            on_change=run_analysis
-        )
+        c1, c2 = st.columns([6, 1])
+        with c1:
+            st.number_input(
+                f"{icon} {k}",
+                min_value=0.0,
+                step=0.1,
+                format="%.2f",
+                key=f"inp_{k}",
+                on_change=run_analysis
+            )
+        with c2:
+            st.checkbox(
+                "🔒", key=f"lock_{k}",
+                help="Зафиксировать компонент (автоподбор не изменит этот элемент)."
+            )
+    st.caption("🔒 — Зафиксировать компонент (автоподбор не изменит этот элемент).")
 
-    st.caption("🟢 — компонент задан (значение > 0); ⚪ — ноль.")
+def unlock_all():
+    for k in FEED_MAP.keys():
+        st.session_state[f"lock_{k}"] = False
+
+def run_optimizer():
+    from models_math import optimize_ration
+    base_inputs = get_current_inputs()
+    locks = {k for k in FEED_MAP.keys() if st.session_state.get(f"lock_{k}", False)}
+    new_inputs, report = optimize_ration(
+        models=models,
+        base_inputs=base_inputs,
+        target_ranges=TARGET_RANGES,
+        locks=locks,
+        sv_bounds=SV_BOUNDS,
+    )
+    # применяем результат
+    for k, v in new_inputs.items():
+        st.session_state[f"inp_{k}"] = float(v)
+    st.session_state["optimizer_report"] = report
+    run_analysis()
 
 # --- Сайдбар ---
 with st.sidebar:
@@ -91,6 +118,15 @@ with st.sidebar:
             parsed_data, logs = parse_any_report(uploaded_file)  # <= вот здесь
             st.session_state.logs = logs
             if parsed_data:
+                # Проходим по всем известным компонентам
+                for component in all_components:
+                    # Если компонент отсутствует в отчете или его значение близко к нулю
+                    if parsed_data.get(component, 0.0) < 0.001:
+                        # Ставим на него замок
+                        st.session_state[f"lock_{component}"] = True
+                    else:
+                        # В противном случае — снимаем замок
+                        st.session_state[f"lock_{component}"] = False
                 for key, value in parsed_data.items():
                     st.session_state[f"inp_{key}"] = value
                 run_analysis()
@@ -98,6 +134,8 @@ with st.sidebar:
 
     st.subheader("Состав рациона (кг СВ):")
     st.button("Сбросить изменения", use_container_width=True, on_click=reset_app_state)
+    st.button("Снять все замки", use_container_width=True, on_click=unlock_all)
+    st.button("Автоподбор", use_container_width=True, on_click=run_optimizer)
     render_group(all_components)
 
 # --- Основной экран ---
@@ -195,5 +233,4 @@ else:
 
     st.dataframe(styled, use_container_width=True)
     st.caption(
-        "Цвет: красный — положительное влияние (рост кислоты при +1 кг), синий — отрицательное. Насыщенность ∝ |значению|.")
-
+        "Цвет: красный — положительное влияние (рост кислоты при +1 кг), синий — отрицательное.")
