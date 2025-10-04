@@ -5,7 +5,7 @@ from config import (
     PAGE_TITLE, FONT, SV_BOUNDS, SV_MARGIN,
     FEED_MAP, MODEL_PATHS, TARGET_RANGES
 )
-from io_parsing import parse_pdf_report
+from io_parsing import parse_any_report
 from models_math import (
     load_models_and_get_influencers,
     predict_all_acids, sensitivities_matrix, build_measures
@@ -64,12 +64,12 @@ if models is None:
 # --- Сайдбар ---
 with st.sidebar:
     st.header("⚙️ Параметры рациона")
-    uploaded_file = st.file_uploader("Загрузите PDF-отчет", type="pdf")
+    uploaded_file = st.file_uploader("Загрузите рацион (PDF или Excel)", type=["pdf", "xlsx", "xls"])
 
     if uploaded_file is not None:
         if st.session_state.get('last_uploaded_filename') != uploaded_file.name:
             st.session_state.last_uploaded_filename = uploaded_file.name
-            parsed_data, logs = parse_pdf_report(uploaded_file)
+            parsed_data, logs = parse_any_report(uploaded_file)  # <= вот здесь
             st.session_state.logs = logs
             if parsed_data:
                 for key, value in parsed_data.items():
@@ -91,11 +91,11 @@ with st.sidebar:
 
 # --- Основной экран ---
 if st.session_state.logs:
-    with st.expander("📝 Логи разбора PDF-файла", expanded=False):
+    with st.expander("📝 Логи разбора файла", expanded=False):
         st.code("\n".join(st.session_state.logs), language='text')
 
 if not st.session_state.analysis_run:
-    st.info("Введите данные в панели слева или загрузите PDF-отчет для начала анализа.")
+    st.info("Введите данные в панели слева или загрузите pdf/xlsx отчёт для начала анализа.")
 else:
     st.subheader("Рацион")
     st.markdown(style_css(FONT), unsafe_allow_html=True)
