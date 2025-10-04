@@ -1,4 +1,5 @@
 import streamlit as st
+import numpy as np
 
 from config import (
     PAGE_TITLE, FONT, SV_BOUNDS, SV_MARGIN,
@@ -168,11 +169,20 @@ else:
 
     # --- Интерпретация ---
     st.markdown("---")
-    with st.expander("🔍 Интерпретация (Δ п.п. на +1 кг компонента)", expanded=False):
+    with st.expander("🔍 Интерпретация (Δ п.п. на +1 кг компонента)", expanded=True):
         step_val = 0.5
         base_inputs = get_current_inputs()
         df_sens = sensitivities_matrix(models, base_inputs, step=step_val)
         st.session_state['sens_matrix_last'] = df_sens
-        st.dataframe(df_sens.round(3), use_container_width=True)
-        st.caption("Положительное значение → при увеличении компонента кислота растёт; "
-                   "отрицательное → падает. Единицы: процентные пункты на +1 кг компонента.")
+
+        # --- ЦВЕТА: красный для +, синий для - (белый около нуля) ---
+        M = float(np.nanmax(np.abs(df_sens.values))) or 1.0  # защита от деления на 0
+        styled = (df_sens
+                  .style
+                  .background_gradient(cmap="bwr", vmin=-M, vmax=M, axis=None)
+                  .format("{:.3f}"))
+
+        st.dataframe(styled, use_container_width=True)
+        st.caption(
+            "Цвет: красный — положительное влияние (рост кислоты при +1 кг), синий — отрицательное. Насыщенность ∝ |значению|.")
+
