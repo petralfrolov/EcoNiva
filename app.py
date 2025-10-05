@@ -68,7 +68,7 @@ def render_group(keys: list[str]):
     items.sort(key=lambda kv: (kv[1] == 0.0, kv[0].lower()))
 
     for k, v in items:
-        icon = "🟢" if v > 0 else "⚪"
+        icon = "⚫" if v > 0 else "⚪"
         c1, c2 = st.columns([6, 1])
         with c1:
             st.number_input(
