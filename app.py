@@ -130,6 +130,7 @@ with st.sidebar:
                         st.session_state[f"lock_{component}"] = False
                 for key, value in parsed_data.items():
                     st.session_state[f"inp_{key}"] = value
+                st.session_state["lock_sv_total_cb"] = False
                 run_analysis()
                 st.rerun()
 
