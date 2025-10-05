@@ -90,7 +90,7 @@ def unlock_all():
     for k in FEED_MAP.keys():
         st.session_state[f"lock_{k}"] = False
 
-def run_optimizer():
+def run_optimizer(lock_sv):
     from models_math import optimize_ration
     base_inputs = get_current_inputs()
     locks = {k for k in FEED_MAP.keys() if st.session_state.get(f"lock_{k}", False)}
@@ -100,6 +100,7 @@ def run_optimizer():
         target_ranges=TARGET_RANGES,
         locks=locks,
         sv_bounds=SV_BOUNDS,
+        lock_sv_total=lock_sv # <-- И здесь: передаем значение в оптимизатор
     )
     # применяем результат
     for k, v in new_inputs.items():
@@ -135,7 +136,12 @@ with st.sidebar:
     st.subheader("Состав рациона (кг СВ):")
     st.button("Сбросить изменения", use_container_width=True, on_click=reset_app_state)
     st.button("Разблокировать всё", use_container_width=True, on_click=unlock_all)
-    st.button("Автоподбор", use_container_width=True, on_click=run_optimizer)
+    lock_sv_total = st.checkbox(
+        "Зафиксировать общее СВ",
+        key="lock_sv_total_cb",
+        help="Если опция включена, автоподбор будет только перераспределять компоненты, сохраняя их общую сумму."
+    )
+    st.button("Автоподбор", use_container_width=True, on_click=run_optimizer, args=(lock_sv_total,))
     render_group(all_components)
 
 # --- Основной экран ---

@@ -241,6 +241,7 @@ def optimize_ration(models: dict,
                     target_ranges: dict,
                     locks: set[str] | None = None,
                     sv_bounds=(15.0, 30.0),
+                    lock_sv_total: bool = False,
                     step: float = 0.5,
                     lambda_l2: float = 1e-3,
                     max_iter: int = 10,
@@ -291,6 +292,11 @@ def optimize_ration(models: dict,
         except np.linalg.LinAlgError:
             delta_free, *_ = np.linalg.lstsq(ATA, ATb, rcond=None)
 
+        if lock_sv_total and len(delta_free) > 0:
+            # Корректируем вектор изменений так, чтобы его сумма была равна нулю.
+            # Это гарантирует, что сумма компонентов рациона не изменится.
+            delta_free -= delta_free.mean()
+
         # Ограничение шага за итерацию
         delta_free = np.clip(delta_free, -max_delta_per_iter, max_delta_per_iter)
 
@@ -299,9 +305,25 @@ def optimize_ration(models: dict,
         delta[free_mask] = delta_free
 
         # Применяем и проекции ограничений
-        x = x + delta
-        x[x < 0] = 0.0
-        x = _enforce_sv_bounds(x, free_mask, sv_bounds[0], sv_bounds[1])
+        if lock_sv_total:
+            s_target = x.sum()  # Запоминаем целевую сумму
+            x = x + delta
+            x[x < 0] = 0.0  # Обрезаем отрицательные значения
+
+            s_current = x[free_mask].sum()  # Считаем сумму только свободных компонентов
+            s_locked = x[~free_mask].sum()  # и заблокированных
+
+            # Рассчитываем новый множитель для свободных компонентов
+            if s_current > 1e-6:
+                factor = (s_target - s_locked) / s_current
+                x[free_mask] *= factor
+
+            x[x < 0] = 0.0  # Финальная проверка на всякий случай
+        else:
+            # Старая логика для режима без блокировки СВ
+            x = x + delta
+            x[x < 0] = 0.0
+            x = _enforce_sv_bounds(x, free_mask, sv_bounds[0], sv_bounds[1])
 
         # Сохраняем прогресс
         history.append({
