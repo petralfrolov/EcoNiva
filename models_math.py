@@ -9,24 +9,29 @@ from config import (
 )
 
 
-# --- Фичи ---
 @st.cache_data
 def engineer_features(manual_inputs: dict):
+    """
+    Создает производные признаки (фичи) на основе базового состава рациона.
+
+    На входе получает словарь с массами базовых компонентов и рассчитывает
+    суммарные и долевые показатели (например, сумма концентратов,
+    доля кукурузы в концентратах), которые используются в моделях.
+
+    Args:
+        manual_inputs (dict): Словарь, где ключи - названия групп кормов,
+                              а значения - их масса в кг СВ.
+
+    Returns:
+        pd.DataFrame: DataFrame с одной строкой, содержащей все
+                      исходные и производные признаки.
+    """
     df = pd.DataFrame([manual_inputs])
     eps = 1e-9
-    df['Кукуруза'] = df.get('Кукуруза', 0.0)
-    df['Зерновые_прочие'] = df.get('Зерновые_прочие', 0.0)
-    df['Комбикорма'] = df.get('Комбикорма', 0.0)
-    df['Корнаж_ЗСК'] = df.get('Корнаж_ЗСК', 0.0)
-    df['Сенаж'] = df.get('Сенаж', 0.0)
-    df['Сено'] = df.get('Сено', 0.0)
-    df['Солома'] = df.get('Солома', 0.0)
-    df['Шрот_соевый'] = df.get('Шрот_соевый', 0.0)
-    df['Шрот_рапсовый'] = df.get('Шрот_рапсовый', 0.0)
-    df['Шрот_подсолнечный'] = df.get('Шрот_подсолнечный', 0.0)
-    df['Жмых_рапсовый'] = df.get('Жмых_рапсовый', 0.0)
-    df['Жмых_льняной'] = df.get('Жмых_льняной', 0.0)
-    df['Солома'] = df.get('Солома', 0.0)
+    # Гарантируем наличие всех колонок, даже если их значение 0
+    for key in FEED_MAP.keys():
+        if key not in df.columns:
+            df[key] = 0.0
 
     df['Sum_conc']    = df[['Кукуруза_сухая', 'Кукуруза_влажная', 'Зерновые_прочие', 'Комбикорма', 'Корнаж_ЗСК']].sum(axis=1)
     df['Sum_rough'] = df[['Сенаж', 'Сено', 'Солома']].sum(axis=1)
@@ -45,15 +50,29 @@ def engineer_features(manual_inputs: dict):
     return df
 
 
-# --- Загрузка моделей + выделение сильных компонентов ---
 @st.cache_resource
 def load_models_and_get_influencers(paths: dict):
+    """
+    Загружает сериализованные модели регрессии из файлов pickle.
+
+    Кэшируется как ресурс Streamlit для предотвращения повторной загрузки.
+    Также собирает уникальный список всех признаков, используемых в моделях.
+
+    Args:
+        paths (dict): Словарь, где ключи - названия кислот, а значения -
+                      пути к файлам моделей.
+
+    Returns:
+        tuple: Кортеж из двух элементов:
+               - dict: Словарь с загруженными объектами моделей.
+               - list: Список всех уникальных названий компонентов рациона.
+    """
     models = {}
     all_model_features = set()
     for acid_name, path in paths.items():
         if not path.exists():
             st.error(f"Файл модели не найден: {path}")
-            return None, [], []
+            return None, []
         with open(path, "rb") as f:
             model_data = pickle.load(f)
             models[acid_name] = model_data
@@ -63,8 +82,18 @@ def load_models_and_get_influencers(paths: dict):
     return models, all_components
 
 
-# --- Прогнозы по кислотам ---
 def _predict_pack(model_pack: dict, inputs_dict: dict):
+    """
+    Внутренняя функция для получения прогноза от одной модели.
+
+    Args:
+        model_pack (dict): Словарь, содержащий объект модели и ее метаданные.
+        inputs_dict (dict): Словарь с входными данными для предсказания.
+
+    Returns:
+        tuple: Среднее прогнозное значение, нижняя и верхняя границы 95%
+               доверительного интервала.
+    """
     x = engineer_features(inputs_dict)[model_pack['features']]
     if model_pack.get('add_constant', True):
         x = sm.add_constant(x, has_constant='add')
@@ -76,6 +105,23 @@ def _predict_pack(model_pack: dict, inputs_dict: dict):
 
 
 def predict_all_acids(models: dict, inputs_dict: dict, target_ranges: dict):
+    """
+    Выполняет прогнозирование для всех жирных кислот.
+
+    Итерируется по всем загруженным моделям, получает прогноз для каждой,
+    сравнивает результат с целевым диапазоном и формирует статус
+    ("Норма", "Риск отклонения", "Вне нормы").
+
+    Args:
+        models (dict): Словарь с загруженными моделями.
+        inputs_dict (dict): Словарь с текущим составом рациона.
+        target_ranges (dict): Словарь с целевыми диапазонами для каждой кислоты.
+
+    Returns:
+        tuple: Кортеж из двух элементов:
+               - dict: Словарь с подробными результатами прогноза для каждой кислоты.
+               - bool: Флаг, указывающий, есть ли хотя бы одно отклонение от нормы.
+    """
     predictions = {}
     any_deviations = False
 
@@ -95,20 +141,31 @@ def predict_all_acids(models: dict, inputs_dict: dict, target_ranges: dict):
             color = '#ff7f0e'
 
         predictions[acid_name] = {
-            "mean": mean,
-            "ci_lower": ci_low,
-            "ci_upper": ci_up,
-            "target_min": t_min,
-            "target_max": t_max,
+            "mean": mean, "ci_lower": ci_low, "ci_upper": ci_up,
+            "target_min": t_min, "target_max": t_max,
             "target": f"{t_min:.1f}%–{t_max:.1f}%",
-            "status": status,
-            "color": color
+            "status": status, "color": color
         }
     return predictions, any_deviations
 
 
-# --- Чувствительности ---
 def local_sensitivities(acid_name: str, models: dict, base_inputs: dict, step: float = 0.5) -> dict:
+    """
+    Рассчитывает локальные чувствительности (частные производные) для одной кислоты.
+
+    Оценивает, как изменится прогнозное содержание одной жирной кислоты
+    при увеличении массы каждого компонента рациона на `step` кг СВ.
+
+    Args:
+        acid_name (str): Название жирной кислоты для анализа.
+        models (dict): Словарь с загруженными моделями.
+        base_inputs (dict): Базовый состав рациона.
+        step (float): Величина изменения массы компонента для расчета производной.
+
+    Returns:
+        dict: Словарь, где ключи - названия компонентов, а значения -
+              рассчитанная чувствительность.
+    """
     base_mean, _, _ = _predict_pack(models[acid_name], base_inputs)
     sens = {}
     for comp in FEED_MAP.keys():
@@ -120,6 +177,21 @@ def local_sensitivities(acid_name: str, models: dict, base_inputs: dict, step: f
 
 
 def sensitivities_matrix(models: dict, base_inputs: dict, step: float = 0.5) -> pd.DataFrame:
+    """
+    Строит матрицу чувствительностей (Якобиан) для всех кислот и компонентов.
+
+    Вызывает `local_sensitivities` для каждой кислоты и объединяет
+    результаты в единый DataFrame.
+
+    Args:
+        models (dict): Словарь с загруженными моделями.
+        base_inputs (dict): Базовый состав рациона.
+        step (float): Величина изменения для расчета производных.
+
+    Returns:
+        pd.DataFrame: Матрица чувствительностей, где строки - компоненты,
+                      а столбцы - жирные кислоты.
+    """
     acids = list(models.keys())
     comps = list(FEED_MAP.keys())
     data = {acid: {} for acid in acids}
@@ -130,13 +202,35 @@ def sensitivities_matrix(models: dict, base_inputs: dict, step: float = 0.5) -> 
     return pd.DataFrame(data, index=comps)
 
 
-# --- Меры регулирования ---
 def _total_sv(inputs: dict) -> float:
+    """Простая утилита для расчета общего сухого вещества в рационе."""
     return float(sum(inputs.values()))
 
 
 def build_measures(preds: dict, sens_df: pd.DataFrame, base_inputs: dict,
                    sv_bounds=(15.0, 30.0), sv_margin: float = 0.5, top_k: int = 3, tol: float = 1e-6):
+    """
+    Формирует текстовые рекомендации по корректировке рациона.
+
+    Для каждой кислоты с отклонением от нормы, на основе матрицы
+    чувствительностей, определяет `top_k` наиболее эффективных
+    компонентов для увеличения и уменьшения, чтобы вернуть показатель
+    в целевой диапазон.
+
+    Args:
+        preds (dict): Результаты прогнозирования.
+        sens_df (pd.DataFrame): Матрица чувствительностей.
+        base_inputs (dict): Текущий состав рациона.
+        sv_bounds (tuple): Границы нормы общего СВ.
+        sv_margin (float): "Буфер" от границ СВ, чтобы избежать крайних рекомендаций.
+        top_k (int): Количество рекомендуемых компонентов для изменения.
+        tol (float): Допуск для определения отклонения.
+
+    Returns:
+        tuple: Кортеж из двух словарей:
+               - measures: Рекомендации по каждой кислоте.
+               - heavy: Компоненты, которые встречаются в рекомендациях наиболее часто.
+    """
     sv = _total_sv(base_inputs)
     sv_min, sv_max = sv_bounds
     allow_inc_global = sv < (sv_max - sv_margin)
@@ -199,6 +293,19 @@ def build_measures(preds: dict, sens_df: pd.DataFrame, base_inputs: dict,
 
 
 def _targets_and_weights(preds: dict, target_ranges: dict):
+    """
+    Вспомогательная функция для оптимизатора.
+
+    Определяет целевые значения (центры диапазонов) и веса для каждой
+    кислоты. Вес тем выше, чем сильнее отклонение от нормы.
+
+    Args:
+        preds (dict): Текущие прогнозы.
+        target_ranges (dict): Целевые диапазоны.
+
+    Returns:
+        tuple: np.array с центрами, np.array с весами, список кислот.
+    """
     acids = list(preds.keys())
     centers = []
     weights = []
@@ -208,22 +315,36 @@ def _targets_and_weights(preds: dict, target_ranges: dict):
         centers.append(c)
 
         st_label = preds[a]["status"]
-        mean_val = preds[a]["mean"]  # Получаем текущее среднее значение
+        mean_val = preds[a]["mean"]
 
-        # Если мы уже в зеленой зоне, не трогаем
         if "🟢" in st_label and lo <= mean_val <= hi:
-            w = 0.0  # Вес равен нулю, цель достигнута
+            w = 0.0
         elif "🔴" in st_label:
             w = 3.0
         elif "🟡" in st_label:
             w = 1.5
         else:
-            w = 0.5  # Для случаев, когда статус зеленый, но мы на самой границе
+            w = 0.5
         weights.append(w)
 
     return np.array(centers, float), np.array(weights, float), acids
 
 def _enforce_sv_bounds(x: np.ndarray, free_mask: np.ndarray, sv_min: float, sv_max: float):
+    """
+    Вспомогательная функция для оптимизатора.
+
+    Корректирует вектор состава рациона так, чтобы общее СВ не выходило
+    за заданные границы, изменяя только незаблокированные компоненты.
+
+    Args:
+        x (np.ndarray): Вектор состава рациона.
+        free_mask (np.ndarray): Маска незаблокированных компонентов.
+        sv_min (float): Минимальное общее СВ.
+        sv_max (float): Максимальное общее СВ.
+
+    Returns:
+        np.ndarray: Скорректированный вектор состава рациона.
+    """
     s = float(x.sum())
     if s > sv_max:
         over = s - sv_max
@@ -233,7 +354,6 @@ def _enforce_sv_bounds(x: np.ndarray, free_mask: np.ndarray, sv_min: float, sv_m
             x[free_mask] *= factor
     elif s < sv_min:
         deficit = sv_min - s
-        # распределяем дефицит пропорционально текущим массам + 1 (чтоб нули тоже росли)
         w = x[free_mask] + 1.0
         wsum = float(w.sum())
         if wsum > 0:
@@ -252,7 +372,28 @@ def optimize_ration(models: dict,
                     max_iter: int = 10,
                     max_delta_per_iter: float = 1):
     """
-    Возвращает (new_inputs: dict, report: dict)
+    Автоматически подбирает оптимальный состав рациона.
+
+    Использует итеративный метод на основе градиентного спуска (решение
+    линейной системы с регуляризацией Ridge) для минимизации взвешенной
+    суммы квадратов отклонений от целевых значений жирных кислот.
+
+    Args:
+        models (dict): Словарь с моделями.
+        base_inputs (dict): Исходный рацион.
+        target_ranges (dict): Целевые диапазоны.
+        locks (set[str] | None): Множество заблокированных компонентов.
+        sv_bounds (tuple): Границы общего СВ.
+        lock_sv_total (bool): Флаг, нужно ли сохранять общее СВ неизменным.
+        step (float): Шаг для расчета Якобиана.
+        lambda_l2 (float): Коэффициент L2-регуляризации.
+        max_iter (int): Максимальное число итераций.
+        max_delta_per_iter (float): Максимальное изменение одного компонента за итерацию.
+
+    Returns:
+        tuple: Кортеж из двух элементов:
+               - dict: Новый, оптимизированный состав рациона.
+               - dict: Отчет о процессе оптимизации.
     """
     locks = locks or set()
     comps = list(FEED_MAP.keys())
@@ -265,20 +406,17 @@ def optimize_ration(models: dict,
 
     history = []
     for it in range(1, max_iter + 1):
-        # Текущие предсказания
         cur_inputs_dict = {c: float(v) for c, v in zip(comps, x)}
         preds, _ = predict_all_acids(models, cur_inputs_dict, target_ranges)
         y = np.array([preds[a]["mean"] for a in acids], float)
         centers, weights, acids_order = _targets_and_weights(preds, target_ranges)
-        r = centers - y  # куда хотим сдвинуть
+        r = centers - y
 
         # Якоби: dY/dX (acids x comps)
         J_df = sensitivities_matrix(models, cur_inputs_dict, step=step).T
-        # гарантируем порядок
         J_df = J_df.reindex(index=acids, columns=comps)
         J = J_df.to_numpy(dtype=float)
 
-        # Оставляем только свободные колонки
         A = J[:, free_mask]
         if A.size == 0:
             return cur_inputs_dict, {"success": False, "reason": "Нет свободных переменных."}
@@ -291,7 +429,7 @@ def optimize_ration(models: dict,
         # Ridge-LS: (A^T A + λI) Δ = A^T r
         ATA = Aw.T @ Aw
         ATb = Aw.T @ rw
-        ATA.flat[::ATA.shape[0]+1] += lambda_l2  # +λI на диагональ
+        ATA.flat[::ATA.shape[0]+1] += lambda_l2
         try:
             delta_free = np.linalg.solve(ATA, ATb)
         except np.linalg.LinAlgError:
@@ -302,30 +440,25 @@ def optimize_ration(models: dict,
             # Это гарантирует, что сумма компонентов рациона не изменится.
             delta_free -= delta_free.mean()
 
-        # Ограничение шага за итерацию
         delta_free = np.clip(delta_free, -max_delta_per_iter, max_delta_per_iter)
 
-        # Собираем полный вектор Δx
         delta = np.zeros_like(x)
         delta[free_mask] = delta_free
 
         # Применяем и проекции ограничений
         if lock_sv_total:
-            s_target = x.sum()  # Запоминаем целевую сумму
+            s_target = x.sum()
             x = x + delta
-            x[x < 0] = 0.0  # Обрезаем отрицательные значения
+            x[x < 0] = 0.0
 
-            s_current = x[free_mask].sum()  # Считаем сумму только свободных компонентов
-            s_locked = x[~free_mask].sum()  # и заблокированных
+            s_current = x[free_mask].sum()
+            s_locked = x[~free_mask].sum()
 
-            # Рассчитываем новый множитель для свободных компонентов
             if s_current > 1e-6:
                 factor = (s_target - s_locked) / s_current
                 x[free_mask] *= factor
-
-            x[x < 0] = 0.0  # Финальная проверка на всякий случай
+            x[x < 0] = 0.0
         else:
-            # Старая логика для режима без блокировки СВ
             x = x + delta
             x[x < 0] = 0.0
             x = _enforce_sv_bounds(x, free_mask, sv_bounds[0], sv_bounds[1])
@@ -353,12 +486,10 @@ def optimize_ration(models: dict,
         if ok_all:
             base_vec = np.array([float(base_inputs.get(c, 0.0)) for c in comps], float)
             return cur_inputs_dict, {
-                "success": True,
-                "iterations": it,
+                "success": True, "iterations": it,
                 "delta_total": float((x - base_vec).sum()),
                 "deltas": {c: float(xi - bi) for c, xi, bi in zip(comps, x, base_vec)},
-                "history": history,
-                "out_of_range": []
+                "history": history, "out_of_range": []
             }
 
     # Если не уложились, возвращаем лучшее найденное
@@ -372,10 +503,8 @@ def optimize_ration(models: dict,
         if not (lo <= m <= hi):
             out_list.append((a, m, lo, hi))
     return cur_inputs_dict, {
-        "success": False,
-        "iterations": max_iter,
+        "success": False, "iterations": max_iter,
         "delta_total": float((x - base_vec).sum()),
         "deltas": {c: float(xi - bi) for c, xi, bi in zip(comps, x, base_vec)},
-        "history": history,
-        "out_of_range": out_list
+        "history": history, "out_of_range": out_list
     }

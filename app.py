@@ -18,23 +18,45 @@ st.set_page_config(layout="wide", page_title=PAGE_TITLE)
 
 # --- Хелперы состояния ---
 def get_current_inputs():
+    """
+    Собирает текущие значения ввода компонентов рациона из состояния сессии.
+
+    Если 'current_inputs' уже существует в состоянии, возвращает его.
+    В противном случае, создает новый словарь из полей `inp_<key>`.
+
+    Returns:
+        dict: Словарь с текущими значениями компонентов рациона (кг СВ).
+    """
     if 'current_inputs' in st.session_state:
         return st.session_state.current_inputs
     return {k: st.session_state.get(f"inp_{k}", 0.0) for k in FEED_MAP.keys()}
 
 
 def reset_app_state():
+    """
+    Сбрасывает состояние приложения к значениям по умолчанию.
+
+    Обнуляет все поля ввода, флаг анализа, логи и имя последнего
+    загруженного файла, а также список неопознанных кормов.
+    """
     for key in FEED_MAP.keys():
         st.session_state[f"inp_{key}"] = 0.0
     st.session_state.analysis_run = False
     st.session_state.logs = []
     st.session_state.last_uploaded_filename = None
-    st.session_state.unclassified_feeds = []  # <-- Сброс неопознанных
+    st.session_state.unclassified_feeds = []
     if 'current_inputs' in st.session_state:
         del st.session_state['current_inputs']
 
 
 def run_analysis():
+    """
+    Запускает полный цикл анализа рациона.
+
+    Получает текущие значения, рассчитывает общее СВ, выполняет
+    прогнозирование по жирным кислотам и сохраняет результаты
+    в состояние сессии.
+    """
     current_inputs = {key: st.session_state[f"inp_{key}"] for key in FEED_MAP.keys()}
     st.session_state.current_inputs = current_inputs
     st.session_state.total_sv = sum(current_inputs.values())
@@ -49,7 +71,7 @@ if 'analysis_run' not in st.session_state:
     st.session_state.analysis_run = False
 if 'logs' not in st.session_state:
     st.session_state.logs = []
-if 'unclassified_feeds' not in st.session_state:  # <-- Новое состояние
+if 'unclassified_feeds' not in st.session_state:
     st.session_state.unclassified_feeds = []
 if 'current_inputs' not in st.session_state:
     st.session_state.current_inputs = {k: st.session_state.get(f"inp_{k}", 0.0) for k in FEED_MAP.keys()}
@@ -64,8 +86,13 @@ models, all_components = load_models_and_get_influencers(MODEL_PATHS)
 if models is None:
     st.stop()
 
-
 def render_group(keys: list[str]):
+    """
+    Отрисовывает группу полей для ввода компонентов рациона в сайдбаре.
+
+    Args:
+        keys (list[str]): Список ключей (названий групп кормов) для отрисовки.
+    """
     # сортируем: сначала активные, внутри — по убыванию значения
     items = [(k, float(st.session_state.get(f"inp_{k}", 0.0))) for k in keys]
     # активные вверх, внутри — по алфавиту
@@ -90,13 +117,19 @@ def render_group(keys: list[str]):
             )
     st.caption("🔒 — Зафиксировать компонент (автоподбор не изменит этот элемент).")
 
-
 def unlock_all():
+    """Снимает все 'замки' с компонентов рациона."""
     for k in FEED_MAP.keys():
         st.session_state[f"lock_{k}"] = False
 
-
 def run_optimizer():
+    """
+    Запускает алгоритм автоматического подбора рациона.
+
+    Собирает текущие параметры (введенные значения, заблокированные
+    компоненты), вызывает функцию оптимизации и обновляет поля ввода
+    результатами.
+    """
     from models_math import optimize_ration
     base_inputs = get_current_inputs()
     if st.session_state.get("lock_sv_total_cb", False):
@@ -112,11 +145,11 @@ def run_optimizer():
         sv_bounds=SV_BOUNDS,
         lock_sv_total=lock_sv
     )
+    # применяем результат
     for k, v in new_inputs.items():
         st.session_state[f"inp_{k}"] = float(v)
     st.session_state["optimizer_report"] = report
     run_analysis()
-
 
 # --- Сайдбар ---
 with st.sidebar:
@@ -126,16 +159,19 @@ with st.sidebar:
     if uploaded_file is not None:
         if st.session_state.get('last_uploaded_filename') != uploaded_file.name:
             st.session_state.last_uploaded_filename = uploaded_file.name
-            # <-- ОБНОВЛЕНО: получаем 3 значения
             parsed_data, logs, unclassified = parse_any_report(uploaded_file)
             st.session_state.logs = logs
-            st.session_state.unclassified_feeds = unclassified  # <-- Сохраняем
+            st.session_state.unclassified_feeds = unclassified
 
             if parsed_data:
+                # Проходим по всем известным компонентам
                 for component in all_components:
+                    # Если компонент отсутствует в отчете или его значение близко к нулю
                     if parsed_data.get(component, 0.0) < 0.001:
+                        # Ставим на него замок
                         st.session_state[f"lock_{component}"] = True
                     else:
+                        # В противном случае — снимаем замок
                         st.session_state[f"lock_{component}"] = False
                 for key, value in parsed_data.items():
                     st.session_state[f"inp_{key}"] = value
@@ -159,7 +195,6 @@ if st.session_state.logs:
     with st.expander("📝 Логи разбора файла", expanded=False):
         st.code("\n".join(st.session_state.logs), language='text')
 
-# --- НОВЫЙ БЛОК: Ручная классификация ---
 if st.session_state.unclassified_feeds:
     with st.container(border=True):
         st.warning("⚠️ Обнаружены неопознанные компоненты. Пожалуйста, распределите их по группам вручную.")
@@ -181,10 +216,10 @@ if st.session_state.unclassified_feeds:
                 selected_cat = st.session_state[f"manual_cat_{i}"]
                 st.session_state[f"inp_{selected_cat}"] += item['value']
 
-            # Очищаем список после распределения
             st.session_state.unclassified_feeds = []
             run_analysis()
             st.rerun()
+
 
 if not st.session_state.analysis_run:
     st.info("Введите данные в панели слева или загрузите pdf/xlsx отчёт для начала анализа.")
@@ -268,7 +303,7 @@ else:
     st.session_state['sens_matrix_last'] = df_sens
 
     # --- ЦВЕТА: красный для +, синий для - (белый около нуля) ---
-    M = float(np.nanmax(np.abs(df_sens.values))) or 1.0  # защита от деления на 0
+    M = float(np.nanmax(np.abs(df_sens.values))) or 1.0
     styled = (df_sens
               .style
               .background_gradient(cmap="bwr", vmin=-M, vmax=M, axis=None)

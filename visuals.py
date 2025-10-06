@@ -2,6 +2,15 @@ import plotly.graph_objects as go
 
 
 def style_css(font_size=16) -> str:
+    """
+    Генерирует строку с CSS-стилями для кастомизации интерфейса Streamlit.
+
+    Args:
+        font_size (int): Базовый размер шрифта для элементов.
+
+    Returns:
+        str: Строка, содержащая тег <style> с CSS-правилами.
+    """
     return f"""
     <style>
     h1, h2, h3 {{ line-height: 1.2; }}
@@ -18,6 +27,17 @@ def style_css(font_size=16) -> str:
 
 
 def build_pie_figure(pie_data: dict, font: int = 16) -> go.Figure:
+    """
+    Создает круговую диаграмму (Pie Chart) для визуализации состава рациона.
+
+    Args:
+        pie_data (dict): Словарь с данными, где ключи - названия,
+                         а значения - числовые величины.
+        font (int): Размер шрифта для текста на диаграмме.
+
+    Returns:
+        go.Figure: Объект фигуры Plotly.
+    """
     fig = go.Figure(data=[go.Pie(
         labels=list(pie_data.keys()),
         values=list(pie_data.values()),
@@ -38,16 +58,25 @@ def build_pie_figure(pie_data: dict, font: int = 16) -> go.Figure:
 
 def build_treemap_figure(data: dict, font: int = 16) -> go.Figure:
     """
-    Создает фигуру Treemap для визуализации структуры рациона.
+    Создает древовидную диаграмму (Treemap) для визуализации структуры рациона.
+
+    Этот тип диаграммы эффективно показывает долю каждого компонента
+    в общей сумме.
+
+    Args:
+        data (dict): Словарь с данными для визуализации.
+        font (int): Базовый размер шрифта.
+
+    Returns:
+        go.Figure: Объект фигуры Plotly.
     """
-    total = sum(data.values())
     labels = list(data.keys())
     values = list(data.values())
 
     fig = go.Figure(go.Treemap(
         labels=labels,
         values=values,
-        parents=[""] * len(labels),  # У всех один родитель - корень
+        parents=[""] * len(labels),
         textinfo="label+value+percent root",
         marker_colorscale='Greens',
     ))
@@ -62,36 +91,35 @@ def build_treemap_figure(data: dict, font: int = 16) -> go.Figure:
 
 
 def build_acids_bar_figure(preds: dict, font: int = 16) -> go.Figure:
+    """
+    Создает сложную столбчатую диаграмму для визуализации прогноза по кислотам.
+
+    Отображает среднее прогнозное значение, 95% доверительный интервал
+    и целевой диапазон для каждой жирной кислоты. Кислоты сортируются
+    по степени отклонения от нормы.
+
+    Args:
+        preds (dict): Словарь с результатами прогнозирования от функции
+                      `predict_all_acids`.
+        font (int): Базовый размер шрифта.
+
+    Returns:
+        go.Figure: Объект фигуры Plotly.
+    """
     fig = go.Figure()
 
-    # Карта для определения приоритета статуса (0 - самый высокий)
     status_priority = {"🔴": 0, "🟡": 1, "🟢": 2}
-
     rows_to_sort = []
     for acid_name, p in preds.items():
-        # # Расчет отклонения от центра (как и раньше)
-        # center = 0.5 * (p['target_min'] + p['target_max'])
-        # span = max(p['target_max'] - p['target_min'], 1e-9)
-        # delta_norm = abs(p['mean'] - center) / span
-
-        # Получаем приоритет из статуса
         status_char = p['status'][0]
-        priority = status_priority.get(status_char, 2)  # По умолчанию - низший приоритет
-
+        priority = status_priority.get(status_char, 2)
         rows_to_sort.append({
             "name": acid_name,
             "priority": priority,
-            # "deviation": delta_norm,
             "value": p['mean']
         })
 
-    # Сортируем сначала по приоритету (0, 1, 2),
-    # а затем внутри каждой группы - по убыванию отклонения
-    rows_to_sort.sort(key=lambda row: (
-        row['priority'],
-        # -row['deviation'],
-        -row['value']
-    ))
+    rows_to_sort.sort(key=lambda row: (row['priority'], -row['value']))
 
     # Извлекаем отсортированный список названий
     acid_names = [row['name'] for row in rows_to_sort]
