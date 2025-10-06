@@ -361,6 +361,7 @@ def _enforce_sv_bounds(x: np.ndarray, free_mask: np.ndarray, sv_min: float, sv_m
     x[x < 0] = 0.0
     return x
 
+
 def optimize_ration(models: dict,
                     base_inputs: dict,
                     target_ranges: dict,
@@ -370,13 +371,15 @@ def optimize_ration(models: dict,
                     step: float = 0.5,
                     lambda_l2: float = 1e-3,
                     max_iter: int = 10,
-                    max_delta_per_iter: float = 1):
+                    max_delta_per_iter: float = 1,
+                    round_precision: int = 2):
     """
     Автоматически подбирает оптимальный состав рациона.
 
     Использует итеративный метод на основе градиентного спуска (решение
     линейной системы с регуляризацией Ridge) для минимизации взвешенной
     суммы квадратов отклонений от целевых значений жирных кислот.
+    Итоговый результат округляется до 100 граммов (0.1 кг).
 
     Args:
         models (dict): Словарь с моделями.
@@ -389,10 +392,11 @@ def optimize_ration(models: dict,
         lambda_l2 (float): Коэффициент L2-регуляризации.
         max_iter (int): Максимальное число итераций.
         max_delta_per_iter (float): Максимальное изменение одного компонента за итерацию.
+        round_precision (int): Количество знаков после запятой при округлении.
 
     Returns:
         tuple: Кортеж из двух элементов:
-               - dict: Новый, оптимизированный состав рациона.
+               - dict: Новый, оптимизированный и округленный состав рациона.
                - dict: Отчет о процессе оптимизации.
     """
     locks = locks or set()
@@ -429,7 +433,7 @@ def optimize_ration(models: dict,
         # Ridge-LS: (A^T A + λI) Δ = A^T r
         ATA = Aw.T @ Aw
         ATb = Aw.T @ rw
-        ATA.flat[::ATA.shape[0]+1] += lambda_l2
+        ATA.flat[::ATA.shape[0] + 1] += lambda_l2
         try:
             delta_free = np.linalg.solve(ATA, ATb)
         except np.linalg.LinAlgError:
@@ -471,8 +475,8 @@ def optimize_ration(models: dict,
         })
 
         # Проверка «зелёной зоны»
-        cur_inputs_dict = {c: float(v) for c, v in zip(comps, x)}
-        preds2, _ = predict_all_acids(models, cur_inputs_dict, target_ranges)
+        cur_inputs_dict_precise = {c: float(v) for c, v in zip(comps, x)}
+        preds2, _ = predict_all_acids(models, cur_inputs_dict_precise, target_ranges)
         ok_all = True
         out_list = []
         for a in acids:
@@ -485,6 +489,8 @@ def optimize_ration(models: dict,
                 out_list.append((a, m, lo, hi))
         if ok_all:
             base_vec = np.array([float(base_inputs.get(c, 0.0)) for c in comps], float)
+            x = np.round(x, round_precision)
+            cur_inputs_dict = {c: float(v) for c, v in zip(comps, x)}
             return cur_inputs_dict, {
                 "success": True, "iterations": it,
                 "delta_total": float((x - base_vec).sum()),
@@ -494,6 +500,7 @@ def optimize_ration(models: dict,
 
     # Если не уложились, возвращаем лучшее найденное
     base_vec = np.array([float(base_inputs.get(c, 0.0)) for c in comps], float)
+    x = np.round(x, round_precision)
     cur_inputs_dict = {c: float(v) for c, v in zip(comps, x)}
     preds2, _ = predict_all_acids(models, cur_inputs_dict, target_ranges)
     out_list = []
@@ -502,6 +509,7 @@ def optimize_ration(models: dict,
         m = preds2[a]["mean"]
         if not (lo <= m <= hi):
             out_list.append((a, m, lo, hi))
+
     return cur_inputs_dict, {
         "success": False, "iterations": max_iter,
         "delta_total": float((x - base_vec).sum()),
