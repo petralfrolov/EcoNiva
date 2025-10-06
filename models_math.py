@@ -28,13 +28,14 @@ def engineer_features(manual_inputs: dict):
     df['Жмых_льняной'] = df.get('Жмых_льняной', 0.0)
     df['Солома'] = df.get('Солома', 0.0)
 
-    df['Sum_conc'] = df[['Кукуруза', 'Зерновые_прочие', 'Комбикорма', 'Корнаж_ЗСК']].sum(axis=1)
+    df['Sum_conc']    = df[['Кукуруза_сухая', 'Кукуруза_влажная', 'Зерновые_прочие', 'Комбикорма', 'Корнаж_ЗСК']].sum(axis=1)
     df['Sum_rough'] = df[['Сенаж', 'Сено', 'Солома']].sum(axis=1)
     df['Sum_prot_ex'] = df[['Шрот_соевый', 'Шрот_рапсовый', 'Шрот_подсолнечный']].sum(axis=1)
     df['Sum_prot_pr'] = df[['Жмых_рапсовый', 'Жмых_льняной']].sum(axis=1)
     df['Sum_prot'] = df['Sum_prot_ex'] + df['Sum_prot_pr']
 
-    df['share_kukur'] = np.where(df['Sum_conc'] > 0, df['Кукуруза'] / (df['Sum_conc'] + eps), 0.0)
+    df['share_kukur_wet'] = np.where(df['Sum_conc'] > 0, (df['Кукуруза_влажная']) / (df['Sum_conc'] + eps), 0.0)
+    df['share_kukur_dry'] = np.where(df['Sum_conc'] > 0, (df['Кукуруза_сухая']) / (df['Sum_conc'] + eps), 0.0)
     df['share_korn'] = np.where(df['Sum_conc'] > 0, df['Корнаж_ЗСК'] / (df['Sum_conc'] + eps), 0.0)
     df['share_zern'] = np.where(df['Sum_conc'] > 0, df['Зерновые_прочие'] / (df['Sum_conc'] + eps), 0.0)
     df['share_soloma'] = np.where(df['Sum_rough'] > 0, df['Солома'] / (df['Sum_rough'] + eps), 0.0)
@@ -205,7 +206,7 @@ def _targets_and_weights(preds: dict, target_ranges: dict):
         st_label = preds[a]["status"]
         mean_val = preds[a]["mean"]  # Получаем текущее среднее значение
 
-        # НОВОЕ ПРАВИЛО: Если мы уже в зеленой зоне, не трогаем
+        # Если мы уже в зеленой зоне, не трогаем
         if "🟢" in st_label and lo <= mean_val <= hi:
             w = 0.0  # Вес равен нулю, цель достигнута
         elif "🔴" in st_label:

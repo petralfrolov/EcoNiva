@@ -30,8 +30,8 @@ def _aggregate_table(df_raw, logs):
     aggregated_data = {key: 0.0 for key in FEED_MAP.keys()}
 
     # Лог первых строк
-    logs.append("\n--- Построчное сопоставление (первые 15 строк) ---")
-    for index, row in df.head(15).iterrows():
+    logs.append("\n--- Построчное сопоставление ---")
+    for index, row in df.iterrows():
         match_found = False
         for category, names in FEED_MAP.items():
             if any(name.strip().lower() in row['clean_name'].lower() for name in names):
@@ -43,13 +43,6 @@ def _aggregate_table(df_raw, logs):
         if not match_found:
             logs.append(
                 f"Строка {index + 1}: '{row[ingredient_col]}' -> '{row['clean_name']}' -> ✗ Категория не найдена")
-
-    # Остальные строки без логов построчно
-    for _, row in df.iloc[15:].iterrows():
-        for category, names in FEED_MAP.items():
-            if any(name.strip().lower() in row['clean_name'].lower() for name in names):
-                aggregated_data[category] += float(row[sv_kg_col])
-                break
 
     logs.append("\n--- Итог агрегации ---")
     logs.append(str({k: round(v, 2) for k, v in aggregated_data.items() if v > 0}))
