@@ -95,10 +95,14 @@ def predict_all_acids(models: dict, inputs_dict: dict, target_ranges: dict):
             color = '#ff7f0e'
 
         predictions[acid_name] = {
-            "mean": mean, "ci_lower": ci_low, "ci_upper": ci_up,
-            "target_min": t_min, "target_max": t_max,
+            "mean": mean,
+            "ci_lower": ci_low,
+            "ci_upper": ci_up,
+            "target_min": t_min,
+            "target_max": t_max,
             "target": f"{t_min:.1f}%–{t_max:.1f}%",
-            "status": status, "color": color
+            "status": status,
+            "color": color
         }
     return predictions, any_deviations
 
