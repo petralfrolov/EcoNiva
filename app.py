@@ -29,6 +29,7 @@ def reset_app_state():
     st.session_state.analysis_run = False
     st.session_state.logs = []
     st.session_state.last_uploaded_filename = None
+    st.session_state.unclassified_feeds = []  # <-- Сброс неопознанных
     if 'current_inputs' in st.session_state:
         del st.session_state['current_inputs']
 
@@ -48,6 +49,8 @@ if 'analysis_run' not in st.session_state:
     st.session_state.analysis_run = False
 if 'logs' not in st.session_state:
     st.session_state.logs = []
+if 'unclassified_feeds' not in st.session_state:  # <-- Новое состояние
+    st.session_state.unclassified_feeds = []
 if 'current_inputs' not in st.session_state:
     st.session_state.current_inputs = {k: st.session_state.get(f"inp_{k}", 0.0) for k in FEED_MAP.keys()}
 if 'total_sv' not in st.session_state:
@@ -60,6 +63,7 @@ for key in FEED_MAP.keys():
 models, all_components = load_models_and_get_influencers(MODEL_PATHS)
 if models is None:
     st.stop()
+
 
 def render_group(keys: list[str]):
     # сортируем: сначала активные, внутри — по убыванию значения
@@ -86,9 +90,11 @@ def render_group(keys: list[str]):
             )
     st.caption("🔒 — Зафиксировать компонент (автоподбор не изменит этот элемент).")
 
+
 def unlock_all():
     for k in FEED_MAP.keys():
         st.session_state[f"lock_{k}"] = False
+
 
 def run_optimizer():
     from models_math import optimize_ration
@@ -104,13 +110,13 @@ def run_optimizer():
         target_ranges=TARGET_RANGES,
         locks=locks,
         sv_bounds=SV_BOUNDS,
-        lock_sv_total=lock_sv # <-- И здесь: передаем значение в оптимизатор
+        lock_sv_total=lock_sv
     )
-    # применяем результат
     for k, v in new_inputs.items():
         st.session_state[f"inp_{k}"] = float(v)
     st.session_state["optimizer_report"] = report
     run_analysis()
+
 
 # --- Сайдбар ---
 with st.sidebar:
@@ -120,17 +126,16 @@ with st.sidebar:
     if uploaded_file is not None:
         if st.session_state.get('last_uploaded_filename') != uploaded_file.name:
             st.session_state.last_uploaded_filename = uploaded_file.name
-            parsed_data, logs = parse_any_report(uploaded_file)  # <= вот здесь
+            # <-- ОБНОВЛЕНО: получаем 3 значения
+            parsed_data, logs, unclassified = parse_any_report(uploaded_file)
             st.session_state.logs = logs
+            st.session_state.unclassified_feeds = unclassified  # <-- Сохраняем
+
             if parsed_data:
-                # Проходим по всем известным компонентам
                 for component in all_components:
-                    # Если компонент отсутствует в отчете или его значение близко к нулю
                     if parsed_data.get(component, 0.0) < 0.001:
-                        # Ставим на него замок
                         st.session_state[f"lock_{component}"] = True
                     else:
-                        # В противном случае — снимаем замок
                         st.session_state[f"lock_{component}"] = False
                 for key, value in parsed_data.items():
                     st.session_state[f"inp_{key}"] = value
@@ -153,6 +158,33 @@ with st.sidebar:
 if st.session_state.logs:
     with st.expander("📝 Логи разбора файла", expanded=False):
         st.code("\n".join(st.session_state.logs), language='text')
+
+# --- НОВЫЙ БЛОК: Ручная классификация ---
+if st.session_state.unclassified_feeds:
+    with st.container(border=True):
+        st.warning("⚠️ Обнаружены неопознанные компоненты. Пожалуйста, распределите их по группам вручную.")
+
+        for i, item in enumerate(st.session_state.unclassified_feeds):
+            c1, c2 = st.columns([3, 2])
+            with c1:
+                st.write(f"**{item['name']}** ({item['value']:.2f} кг СВ)")
+            with c2:
+                st.selectbox(
+                    "Группа",
+                    options=list(FEED_MAP.keys()),
+                    key=f"manual_cat_{i}",
+                    label_visibility="collapsed"
+                )
+
+        if st.button("Применить ручную классификацию", use_container_width=True):
+            for i, item in enumerate(st.session_state.unclassified_feeds):
+                selected_cat = st.session_state[f"manual_cat_{i}"]
+                st.session_state[f"inp_{selected_cat}"] += item['value']
+
+            # Очищаем список после распределения
+            st.session_state.unclassified_feeds = []
+            run_analysis()
+            st.rerun()
 
 if not st.session_state.analysis_run:
     st.info("Введите данные в панели слева или загрузите pdf/xlsx отчёт для начала анализа.")
