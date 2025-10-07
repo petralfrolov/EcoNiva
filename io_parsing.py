@@ -6,7 +6,6 @@ from config import FEED_MAP
 import re
 
 
-# --- НОВОЕ: Классификация по коду ---
 def _classify_by_code(clean_name: str, logs: list) -> str | None:
     """
     Пытается классифицировать корм по его числовому коду.
@@ -42,7 +41,6 @@ def _classify_by_code(clean_name: str, logs: list) -> str | None:
     return category
 
 
-# --- ОБНОВЛЕНО: общая нормализация таблицы и агрегация ---
 def _aggregate_table(df_raw, logs):
     """
     Агрегирует данные из таблицы рациона, сопоставляя компоненты с категориями.
