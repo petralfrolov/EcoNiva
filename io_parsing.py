@@ -85,6 +85,8 @@ def _aggregate_table(df_raw, logs):
     logs.append("\n--- Построчное сопоставление ---")
     for index, row in df.iterrows():
         if 'общие значения' in row['clean_name'].lower():
+            logs.append(
+                f"Строка {index + 1}: '{row[ingredient_col]}' -> ✗ Общие значения, пропускаем")
             continue
 
         match_found = False

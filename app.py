@@ -86,6 +86,7 @@ models, all_components = load_models_and_get_influencers(MODEL_PATHS)
 if models is None:
     st.stop()
 
+
 def render_group(keys: list[str]):
     """
     Отрисовывает группу полей для ввода компонентов рациона в сайдбаре.
@@ -117,10 +118,12 @@ def render_group(keys: list[str]):
             )
     st.caption("🔒 — Зафиксировать компонент (автоподбор не изменит этот элемент).")
 
+
 def unlock_all():
     """Снимает все 'замки' с компонентов рациона."""
     for k in FEED_MAP.keys():
         st.session_state[f"lock_{k}"] = False
+
 
 def run_optimizer():
     """
@@ -150,6 +153,7 @@ def run_optimizer():
         st.session_state[f"inp_{k}"] = float(v)
     st.session_state["optimizer_report"] = report
     run_analysis()
+
 
 # --- Сайдбар ---
 with st.sidebar:
@@ -197,29 +201,12 @@ if st.session_state.logs:
 
 if st.session_state.unclassified_feeds:
     with st.container(border=True):
-        st.warning("⚠️ Обнаружены неопознанные компоненты. Пожалуйста, распределите их по группам вручную.")
+        st.warning("⚠️ Обнаружены неопознанные компоненты.")
 
         for i, item in enumerate(st.session_state.unclassified_feeds):
             c1, c2 = st.columns([3, 2])
             with c1:
                 st.write(f"**{item['name']}** ({item['value']:.2f} кг СВ)")
-            with c2:
-                st.selectbox(
-                    "Группа",
-                    options=list(FEED_MAP.keys()),
-                    key=f"manual_cat_{i}",
-                    label_visibility="collapsed"
-                )
-
-        if st.button("Применить ручную классификацию", use_container_width=True):
-            for i, item in enumerate(st.session_state.unclassified_feeds):
-                selected_cat = st.session_state[f"manual_cat_{i}"]
-                st.session_state[f"inp_{selected_cat}"] += item['value']
-
-            st.session_state.unclassified_feeds = []
-            run_analysis()
-            st.rerun()
-
 
 if not st.session_state.analysis_run:
     st.info("Введите данные в панели слева или загрузите pdf/xlsx отчёт для начала анализа.")

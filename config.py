@@ -7,13 +7,14 @@ SV_BOUNDS = (15.0, 30.0)
 SV_MARGIN = 0.5
 
 # --- Модели ---
+BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATHS = {
-    "Лауриновая": Path(r'C:\Users\Петр\papka bebrapka\ols_Лауриновая.pkl'),
-    "Пальмитиновая": Path(r'C:\Users\Петр\papka bebrapka\ols_Пальмитиновая.pkl'),
-    "Стеариновая": Path(r'C:\Users\Петр\papka bebrapka\ols_Стеариновая.pkl'),
-    "Олеиновая": Path(r'C:\Users\Петр\papka bebrapka\ols_Олеиновая.pkl'),
-    "Линолевая": Path(r'C:\Users\Петр\papka bebrapka\ols_Линолевая.pkl'),
-    "Линоленовая": Path(r'C:\Users\Петр\papka bebrapka\ols_Линоленовая.pkl'),
+    "Лауриновая": BASE_DIR / "ols_models" / "ols_Лауриновая.pkl",
+    "Пальмитиновая": BASE_DIR / "ols_models" / "ols_Пальмитиновая.pkl",
+    "Стеариновая": BASE_DIR / "ols_models" / "ols_Стеариновая.pkl",
+    "Олеиновая": BASE_DIR / "ols_models" / "ols_Олеиновая.pkl",
+    "Линолевая": BASE_DIR / "ols_models" / "ols_Линолевая.pkl",
+    "Линоленовая": BASE_DIR / "ols_models" / "ols_Линоленовая.pkl",
 }
 
 TARGET_RANGES = {

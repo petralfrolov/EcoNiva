@@ -33,7 +33,8 @@ def engineer_features(manual_inputs: dict):
         if key not in df.columns:
             df[key] = 0.0
 
-    df['Sum_conc']    = df[['Кукуруза_сухая', 'Кукуруза_влажная', 'Зерновые_прочие', 'Комбикорма', 'Корнаж_ЗСК']].sum(axis=1)
+    df['Sum_conc'] = df[['Кукуруза_сухая', 'Кукуруза_влажная', 'Зерновые_прочие', 'Комбикорма', 'Корнаж_ЗСК']].sum(
+        axis=1)
     df['Sum_rough'] = df[['Сенаж', 'Сено', 'Солома']].sum(axis=1)
     df['Sum_prot_ex'] = df[['Шрот_соевый', 'Шрот_рапсовый', 'Шрот_подсолнечный']].sum(axis=1)
     df['Sum_prot_pr'] = df[['Жмых_рапсовый', 'Жмых_льняной']].sum(axis=1)
@@ -270,13 +271,15 @@ def build_measures(preds: dict, sens_df: pd.DataFrame, base_inputs: dict,
         if allow_inc_global:
             for comp in inc_candidates.index:
                 inc_list.append(comp)
-                if len(inc_list) >= top_k: break
+                if len(inc_list) >= top_k:
+                    break
 
         if allow_dec_global:
             for comp in dec_candidates.index:
                 if base_inputs.get(comp, 0.0) > 0.0:
                     dec_list.append(comp)
-                if len(dec_list) >= top_k: break
+                if len(dec_list) >= top_k:
+                    break
 
         measures[acid] = {"status": status, "inc": inc_list, "dec": dec_list}
         all_inc.extend(inc_list)
@@ -328,6 +331,7 @@ def _targets_and_weights(preds: dict, target_ranges: dict):
         weights.append(w)
 
     return np.array(centers, float), np.array(weights, float), acids
+
 
 def _enforce_sv_bounds(x: np.ndarray, free_mask: np.ndarray, sv_min: float, sv_max: float):
     """
