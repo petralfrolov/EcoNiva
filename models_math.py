@@ -5,7 +5,7 @@ import pickle
 import statsmodels.api as sm
 
 from config import (
-    FEED_MAP, TARGET_RANGES
+    FEED_MAP, TARGET_RANGES, TARGET_COLS
 )
 
 
@@ -520,3 +520,159 @@ def optimize_ration(models: dict,
         "deltas": {c: float(xi - bi) for c, xi, bi in zip(comps, x, base_vec)},
         "history": history, "out_of_range": out_list
     }
+
+
+@st.cache_data
+def engineer_features_nutrients(nutrients_inputs: dict, ensure_cols: list[str] | None = None) -> pd.DataFrame:
+    """
+    Готовит фичи для моделей, обученных на нутриентах.
+
+    Берёт словарь {нутриент: значение} и гарантирует наличие всех колонок,
+    необходимых модели (отсутствующие -> 0.0).
+
+    Args:
+        nutrients_inputs (dict): значения нутриентов.
+        ensure_cols (list[str] | None): явный список колонок; если None — используем TARGET_COLS.
+
+    Returns:
+        pd.DataFrame: одна строка с признаками для предсказания.
+    """
+    cols = ensure_cols or list(TARGET_COLS)
+    row = {c: float(nutrients_inputs.get(c, 0.0)) for c in cols}
+    return pd.DataFrame([row])[cols]
+
+
+def _predict_pack_nutrients(model_pack: dict, nutrients_inputs: dict):
+    """
+    Внутренний предиктор для «нутриентных» моделей.
+
+    Args:
+        model_pack (dict): {'model', 'features', 'add_constant'?}
+        nutrients_inputs (dict): словарь значений нутриентов.
+
+    Returns:
+        tuple: (mean, ci_low, ci_up) — прогноз и 95% ДИ
+    """
+    X = engineer_features_nutrients(nutrients_inputs, ensure_cols=model_pack['features'])
+    if model_pack.get('add_constant', True):
+        X = sm.add_constant(X, has_constant='add')
+    sf = model_pack['model'].get_prediction(X).summary_frame(alpha=0.05)
+    mean = float(max(0.0, sf['mean'].iloc[0]))
+    lo = float(max(0.0, sf['mean_ci_lower'].iloc[0]))
+    hi = float(max(0.0, sf['mean_ci_upper'].iloc[0]))
+    return mean, lo, hi
+
+
+def predict_all_acids_from_nutrients(models_nutri: dict, nutrients_inputs: dict, target_ranges: dict):
+    """
+    Прогноз всех кислот из набора нутриентов (вторая вкладка).
+
+    Args:
+        models_nutri (dict): модели, обученные на нутриентах.
+        nutrients_inputs (dict): значения нутриентов.
+        target_ranges (dict): целевые диапазоны по кислотам.
+
+    Returns:
+        tuple[dict, bool]: как в predict_all_acids — словарь метрик и флаг отклонений.
+    """
+    predictions, any_deviations = {}, False
+    for acid_name, pack in models_nutri.items():
+        mean, ci_low, ci_up = _predict_pack_nutrients(pack, nutrients_inputs)
+        t_min, t_max = target_ranges[acid_name]
+
+        color, status = '#2ca02c', "🟢 Норма"
+        if mean < t_min or mean > t_max:
+            status, any_deviations, color = "🔴 Вне нормы", True, '#d62728'
+        elif ci_low < t_min or ci_up > t_max:
+            status, any_deviations, color = "🟡 Риск отклонения", True, '#ff7f0e'
+
+        predictions[acid_name] = {
+            "mean": mean, "ci_lower": ci_low, "ci_upper": ci_up,
+            "target_min": t_min, "target_max": t_max, "target": f"{t_min:.1f}%–{t_max:.1f}%",
+            "status": status, "color": color
+        }
+    return predictions, any_deviations
+
+
+def local_sensitivities_nutrients(acid_name: str, models_nutri: dict, base_nutrients: dict, step: float = 1.0) -> dict:
+    """
+    Локальные чувствительности d(кислота)/d(нутриент) при увеличении нутриента на `step`.
+
+    Args:
+        acid_name (str): целевая кислота.
+        models_nutri (dict): «нутриентные» модели.
+        base_nutrients (dict): текущие значения нутриентов.
+        step (float): шаг изменения нутриента (в его единицах).
+
+    Returns:
+        dict[str,float]: {нутриент: чувствительность}.
+    """
+    base_mean, _, _ = _predict_pack_nutrients(models_nutri[acid_name], base_nutrients)
+    sens = {}
+    # считаем по всем целевым колонкам, чтобы таблица была полной
+    for col in TARGET_COLS:
+        x2 = dict(base_nutrients)
+        x2[col] = max(0.0, float(x2.get(col, 0.0)) + step)
+        m2, _, _ = _predict_pack_nutrients(models_nutri[acid_name], x2)
+        sens[col] = (m2 - base_mean) / step
+    return sens
+
+
+def sensitivities_matrix_nutrients(models_nutri: dict, base_nutrients: dict, step: float = 1.0) -> pd.DataFrame:
+    """
+    Матрица чувствительностей (Якобиан) dY/dZ для кислот Y по нутриентам Z.
+
+    Args:
+        models_nutri (dict): «нутриентные» модели.
+        base_nutrients (dict): значения нутриентов.
+        step (float): шаг изменения нутриента.
+
+    Returns:
+        pd.DataFrame: строки — нутриенты, столбцы — кислоты.
+    """
+    acids = list(models_nutri.keys())
+    data = {acid: local_sensitivities_nutrients(acid, models_nutri, base_nutrients, step=step) for acid in acids}
+    return pd.DataFrame(data, index=list(TARGET_COLS))
+
+
+def build_measures_nutrients(preds: dict, sens_df: pd.DataFrame, base_nutrients: dict, top_k: int = 3, tol: float = 1e-6):
+    """
+    Подбор «интерпретации» для второй вкладки: какие нутриенты увеличить/уменьшить.
+
+    В отличие от компонентного варианта, здесь нет ограничений по сумме СВ
+    и «замков» — просто берём top_k нутриентов по модулю чувствительности
+    с правильным знаком под требуемое направление (вверх/вниз).
+
+    Returns:
+        dict: {кислота: {'status', 'inc': [...], 'dec': [...]}}
+    """
+    measures = {}
+    for acid, p in preds.items():
+        if acid not in sens_df.columns:
+            continue
+
+        status = p['status']
+        mean, lo, hi = p['mean'], p['target_min'], p['target_max']
+        if '🟢' in status:
+            continue
+
+        col = sens_df[acid]
+        center = 0.5 * (lo + hi)
+        if mean < lo - tol:
+            need_up = True
+        elif mean > hi + tol:
+            need_up = False
+        else:
+            need_up = (mean < center)
+
+        if need_up:
+            inc_candidates = col[col > 0].sort_values(ascending=False)      # что повышает кислоту
+            dec_candidates = col[col < 0].abs().sort_values(ascending=False)  # что понижает — для "уменьшить"
+        else:
+            dec_candidates = col[col > 0].sort_values(ascending=False)      # что повышает — надо уменьшать
+            inc_candidates = col[col < 0].abs().sort_values(ascending=False)  # что понижает — надо увеличивать
+
+        inc_list = list(inc_candidates.index[:top_k])
+        dec_list = list(dec_candidates.index[:top_k])
+        measures[acid] = {"status": status, "inc": inc_list, "dec": dec_list}
+    return measures

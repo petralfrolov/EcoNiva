@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 from io import BytesIO
-from config import FEED_MAP
+from config import FEED_MAP, TARGET_COLS
 import re
 
 
@@ -221,3 +221,142 @@ def parse_any_report(uploaded_file):
     if name.endswith(".xlsx") or name.endswith(".xls"):
         return parse_excel_report(uploaded_file)
     return {}, [f"Неподдерживаемый формат: {uploaded_file.name}. Ожидается PDF или Excel."], []
+
+
+@st.cache_data
+def parse_pdf_nutrients(uploaded_file):
+    """
+    Читает PDF-отчёт с таблицами нутриентов и возвращает агрегированные значения
+    по TARGET_COLS в формате: (aggregated_data: dict[str,float], logs: list[str], unclassified: list[dict])
+
+    Логика обработки таблицы совпадает с примером из ноутбука:
+      - поиск таблицы со столбцами 'СП' ИЛИ 'Нутриент'
+      - переименование столбцов до вида ['Нутриент', ..., 'Содержание', ...]
+      - очистка названий и чисел
+      - свёртка в wide-строку и отбор TARGET_COLS (отсутствующие -> 0.0)
+    """
+    logs = []
+    if uploaded_file is None:
+        return {}, ["Файл не был загружен."], []
+
+    logs.append(f"Начало обработки файла: {uploaded_file.name}")
+
+    # 1) собрать все таблицы из PDF
+    tables = []
+    try:
+        with pdfplumber.open(uploaded_file) as pdf:
+            for p_i, page in enumerate(pdf.pages, start=1):
+                extracted = page.extract_tables()
+                if extracted:
+                    logs.append(f"Стр. {p_i}: найдено таблиц: {len(extracted)}")
+                    tables.extend(extracted)
+    except Exception as e:
+        logs.append(f"КРИТИЧЕСКАЯ ОШИБКА при чтении PDF: {e}")
+        return {}, logs, []
+
+    if not tables:
+        logs.append("ОШИБКА: Таблиц в PDF не найдено.")
+        return {}, logs, []
+
+    # 2) найти первую «подходящую» таблицу нутриентов и привести к единому виду
+    df = None
+    chosen_idx = None
+    for i, tbl in enumerate(tables):
+        # минимальная валидация
+        if not tbl or len(tbl) < 2:
+            continue
+        # конструируем DataFrame
+        try:
+            tmp = pd.DataFrame(tbl[1:], columns=tbl[0])
+            if tmp.shape[0] == 0:
+                continue
+
+            # как в ноутбуке: объявляем заголовком первую строку
+            tmp.columns = tmp.iloc[0]
+            # ВЕТКА 1: в заголовках есть 'СП' -> переименовываем спец-столбцы
+            if 'СП' in tmp.columns:
+                cols = list(tmp.columns)
+                if len(cols) >= 2:
+                    cols[0] = 'Нутриент'
+                if len(cols) >= 2:
+                    cols[-2] = 'Содержание'
+                tmp.columns = cols
+                df = tmp.copy()
+                chosen_idx = i
+                logs.append(f"Выбрана таблица {i}: по признаку наличия столбца 'СП'.")
+                break
+
+            # ВЕТКА 2: уже есть 'Нутриент' -> срезаем повтор заголовка и чиним 'Содержани'
+            if 'Нутриент' in tmp.columns:
+                tmp = tmp[1:].reset_index(drop=True)
+                tmp = tmp.rename(columns={'Содержани': 'Содержание'})
+                if 'Содержание' in tmp.columns:
+                    df = tmp.copy()
+                    chosen_idx = i
+                    logs.append(f"Выбрана таблица #{i}: по признаку наличия столбца 'Нутриент'.")
+                    break
+        except Exception as e:
+            logs.append(f"Пропускаю таблицу #{i}: ошибка преобразования: {e}")
+            continue
+
+    if df is None:
+        logs.append("ОШИБКА: Не найдено ни одной таблицы с колонками 'СП' или 'Нутриент'.")
+        return {}, logs, []
+
+    if 'Нутриент' not in df.columns or 'Содержание' not in df.columns:
+        logs.append(f"ОШИБКА: В выбранной таблице нет обязательных столбцов. Колонки: {list(df.columns)}")
+        return {}, logs, []
+
+    logs.append(f"Колонки выбранной таблицы: {list(df.columns)}")
+
+    # 3) очистка названий нутриентов
+    names = (
+        df['Нутриент'].astype(str)
+        .str.split('/', n=1).str[0]
+        .str.strip(' .,\u00A0')
+    )
+    df = df.copy()
+    df['Нутриент'] = names
+
+    # 4) очистка чисел
+    clean = (
+        df['Содержание'].astype(str)
+        .str.replace('\u00A0', '', regex=False)  # неразрывные пробелы
+        .str.replace(' ', '', regex=False)       # обычные пробелы
+        .str.replace(',', '.', regex=False)      # запятая -> точка
+        .replace({'': None, '-': None, '—': None})
+    )
+    df['Содержание'] = pd.to_numeric(clean, errors='coerce')
+
+    before = len(df)
+    df = df.dropna(subset=['Содержание'])
+    logs.append(f"Удалено пустых строк: {before - len(df)}; осталось: {len(df)}.")
+
+    if df.empty:
+        logs.append("ОШИБКА: После очистки не осталось числовых значений.")
+        return {}, logs, []
+
+    # 5) свёртка в wide
+    s = df.groupby('Нутриент', as_index=True)['Содержание'].sum()
+    wide = s.to_frame().T
+    wide.columns.name = None
+    wide = wide.reset_index(drop=True)
+    wide['__source'] = str(getattr(uploaded_file, "name", "pdf"))
+
+    # 6) собрать aggregated_data по TARGET_COLS (отсутствующие -> 0.0)
+    aggregated_data = {}
+    for col in TARGET_COLS:
+        if col in wide.columns:
+            try:
+                aggregated_data[col] = float(pd.to_numeric(wide[col].iloc[0], errors='coerce') or 0.0)
+            except Exception:
+                aggregated_data[col] = 0.0
+        else:
+            aggregated_data[col] = 0.0
+
+    # округлять или нет — оставляем как есть; лог выведем округлённый
+    logs.append("\n--- Итог парсинга ---\n" +
+                str({k: round(v, 3) for k, v in aggregated_data.items()}))
+
+    # формат возвращаем такой же, как у существующих парсеров: dict, logs, unclassified
+    return aggregated_data, logs, []

@@ -17,6 +17,15 @@ MODEL_PATHS = {
     "Линоленовая": BASE_DIR / "ols_models" / "ols_Линоленовая.pkl",
 }
 
+MODEL_PATHS_NUTRI  = {
+    "Лауриновая": BASE_DIR / "ols_models_nutrients" / "ols_nutrients_Лауриновая.pkl",
+    "Пальмитиновая": BASE_DIR / "ols_models_nutrients" / "ols_nutrients_Пальмитиновая.pkl",
+    "Стеариновая": BASE_DIR / "ols_models_nutrients" / "ols_nutrients_Стеариновая.pkl",
+    "Олеиновая": BASE_DIR / "ols_models_nutrients" / "ols_nutrients_Олеиновая.pkl",
+    "Линолевая": BASE_DIR / "ols_models_nutrients" / "ols_nutrients_Линолевая.pkl",
+    "Линоленовая": BASE_DIR / "ols_models_nutrients" / "ols_nutrients_Линоленовая.pkl",
+}
+
 TARGET_RANGES = {
     "Лауриновая": (2.0, 4.4),
     "Пальмитиновая": (21.0, 32.0),
@@ -25,6 +34,12 @@ TARGET_RANGES = {
     "Линолевая": (2.2, 5.0),
     "Линоленовая": (0.0, 1.5),
 }
+
+TARGET_COLS = [
+    'aNDFom', 'CHO C uNDF', 'Крахмал', 'СП', 'Сол. КП', 'НВУ',
+    'Ca', 'Сахар (ВРУ)', 'K', 'Mg', 'P', 'ОЖК',
+    'ЧЭЛ 3x NRC', 'Зола', 'Растворимая', 'СЖ'
+]
 
 # --- Карта компонентов (включены все компоненты из pdf файлов) ---
 FEED_MAP = {
