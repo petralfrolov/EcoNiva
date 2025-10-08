@@ -6,7 +6,7 @@ from config import (
     FEED_MAP, MODEL_PATHS, TARGET_RANGES,
     MODEL_PATHS_NUTRI, TARGET_COLS
 )
-from io_parsing import parse_any_report, parse_pdf_nutrients
+from io_parsing import parse_any_report, parse_pdf_nutrients, parse_excel_nutrients
 from models_math import (
     load_models_and_get_influencers,
     predict_all_acids, sensitivities_matrix, build_measures,
@@ -231,13 +231,14 @@ with st.sidebar:
             # Импорт данных по нутриентам для pdf файла
             if uploaded_file.name.lower().endswith(".pdf"):
                 nutr_vals, nutr_logs, _ = parse_pdf_nutrients(uploaded_file)
-                st.session_state.nutri_logs = list(nutr_logs or [])
-
-                if nutr_vals:
-                    for k, v in nutr_vals.items():
-                        if k in TARGET_COLS:
-                            st.session_state[f"nutri_{k}"] = float(v)
-                    run_analysis_nutrients()
+            else:
+                nutr_vals, nutr_logs, _ = parse_excel_nutrients(uploaded_file)
+            st.session_state.nutri_logs = list(nutr_logs or [])
+            if nutr_vals:
+                for k, v in nutr_vals.items():
+                    if k in TARGET_COLS:
+                        st.session_state[f"nutri_{k}"] = float(v)
+                run_analysis_nutrients()
 
             if parsed_data:
                 # Проходим по всем известным компонентам

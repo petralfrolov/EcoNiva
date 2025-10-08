@@ -165,11 +165,8 @@ def parse_pdf_report(uploaded_file):
 @st.cache_data
 def parse_excel_report(uploaded_file):
     """
-    Извлекает данные о рационе из Excel-файла.
-
-    Использует `pandas` для чтения файла. Пытается найти лист,
-    содержащий колонки 'Ингредиент' и 'СВ кг'. Если такой лист не найден,
-    используется первый лист. Данные передаются в `_aggregate_table`.
+    Извлекает данные о рационе из Excel-файла, в том числе из плохо
+    структурированных файлов с объединенными ячейками и смещенными заголовками.
 
     Args:
         uploaded_file: Загруженный пользователем Excel-файл.
@@ -182,24 +179,65 @@ def parse_excel_report(uploaded_file):
         return {}, ["Файл не был загружен."], []
 
     logs.append(f"Начало обработки Excel: {uploaded_file.name}")
+    df_raw = None
+
     try:
-        xls = pd.ExcelFile(uploaded_file)
-        candidate = None
-        for sheet in xls.sheet_names:
-            df_try = xls.parse(sheet)
-            cols = [str(c) for c in df_try.columns]
-            if any('Ингредиент' in c for c in cols) and any('СВ кг' in c for c in cols):
-                candidate = df_try
-                logs.append(f"Выбрана вкладка: {sheet}")
-                break
-        if candidate is None:
-            logs.append("Подходящих вкладок не найдено, используем первый лист.")
-            candidate = xls.parse(xls.sheet_names[0])
+        # Пытаемся прочитать первый лист без заголовков, чтобы проанализировать его структуру
+        df_raw = pd.read_excel(uploaded_file, header=None, sheet_name=0)
     except Exception as e:
         logs.append(f"КРИТИЧЕСКАЯ ОШИБКА при чтении Excel: {e}")
         return {}, logs, []
 
-    return _aggregate_table(candidate, logs)
+    # --- Начало новой логики для "кривых" файлов ---
+
+    # 1. Ищем строку, где находятся настоящие заголовки (по слову "Ингредиент")
+    header_row_index = -1
+    for i, row in df_raw.iterrows():
+        # Проверяем, есть ли искомое слово в какой-либо ячейке строки
+        if any('Ингредиент' in str(cell) for cell in row):
+            header_row_index = i
+            logs.append(f"Найдена строка с заголовками, её индекс: {header_row_index}")
+            break
+
+    if header_row_index == -1:
+        logs.append("ОШИБКА: В файле не найдена строка с заголовком 'Ингредиент'.")
+        # Попробуем передать "как есть" в старую логику на всякий случай
+        return _aggregate_table(df_raw, logs)
+
+    # 2. Ищем конец таблицы данных (по строке "Общее значение")
+    footer_row_index = len(df_raw)  # По умолчанию берем до конца
+    for i in range(header_row_index, len(df_raw)):
+        # Проверяем первую ячейку строки
+        cell_value = str(df_raw.iloc[i, 0])
+        if 'Общее значение' in cell_value or 'Сводный анализ' in cell_value:
+            footer_row_index = i
+            logs.append(f"Найдена строка с итогами ('{cell_value}'), её индекс: {footer_row_index}")
+            break
+
+    # 3. Вырезаем только нужный кусок DataFrame
+    df_clean = df_raw.iloc[header_row_index:footer_row_index].copy()
+
+    # 4. Устанавливаем правильные заголовки
+    df_clean.columns = df_clean.iloc[0].astype(str)
+    # Удаляем строку, которая теперь стала заголовком
+    df_clean = df_clean.iloc[1:].reset_index(drop=True)
+    logs.append(f"Установлены новые заголовки: {list(df_clean.columns)}")
+
+    # 5. "Чиним" объединенные ячейки в первом столбце (самое важное)
+    # Метод ffill() (forward fill) заполняет пустые ячейки значением из предыдущей непустой.
+    ingredient_col_name = df_clean.columns[0]
+    df_clean[ingredient_col_name] = df_clean[ingredient_col_name].ffill()
+    logs.append(
+        f"Применено прямое заполнение (ffill) для столбца '{ingredient_col_name}' для исправления объединенных ячеек.")
+
+    # 6. Удаляем полностью пустые строки, если они есть
+    df_clean.dropna(how='all', inplace=True)
+
+    # --- Конец новой логики ---
+
+    # Передаем уже очищенный и структурированный DataFrame в функцию агрегации
+    logs.append("Передача очищенного DataFrame в функцию _aggregate_table.")
+    return _aggregate_table(df_clean, logs)
 
 
 @st.cache_data
@@ -359,4 +397,100 @@ def parse_pdf_nutrients(uploaded_file):
                 str({k: round(v, 3) for k, v in aggregated_data.items()}))
 
     # формат возвращаем такой же, как у существующих парсеров: dict, logs, unclassified
+    return aggregated_data, logs, []
+
+
+@st.cache_data
+def parse_excel_nutrients(uploaded_file):
+    """
+    Читает Excel-отчёт с таблицами нутриентов, в том числе разорванными на части,
+    и возвращает агрегированные значения по TARGET_COLS.
+    """
+    logs = []
+    if uploaded_file is None:
+        return {}, ["Файл не был загружен."], []
+
+    logs.append(f"Начало обработки файла нутриентов Excel: {uploaded_file.name}")
+
+    try:
+        # 1. Читаем первый лист без заголовков, чтобы проанализировать его структуру
+        df_raw = pd.read_excel(uploaded_file, header=None, sheet_name=0)
+    except Exception as e:
+        logs.append(f"КРИТИЧЕСКАЯ ОШИБКА при чтении Excel: {e}")
+        return {}, logs, []
+
+    # 2. Ищем все строки-заголовки по слову "Нутриент"
+    header_indices = df_raw[df_raw.apply(
+        lambda row: row.astype(str).str.contains('Нутриент').any(), axis=1
+    )].index.tolist()
+
+    if not header_indices:
+        logs.append("ОШИБКА: Не найдено ни одной таблицы с заголовком 'Нутриент'.")
+        return {}, logs, []
+
+    logs.append(f"Найдены заголовки на строках: {header_indices}")
+
+    # 3. Определяем корректное количество колонок и их имена по первому заголовку
+    header_series = df_raw.iloc[header_indices[0]]
+    last_valid_col = header_series.last_valid_index()
+    column_names = header_series.iloc[:last_valid_col + 1].tolist()
+    num_columns = len(column_names)
+    logs.append(f"Определены {num_columns} колонок: {column_names}")
+
+    # 4. Собираем и объединяем все части таблицы
+    all_data_chunks = []
+    for i, start_index in enumerate(header_indices):
+        end_index = header_indices[i + 1] if i + 1 < len(header_indices) else len(df_raw)
+        # Вырезаем данные, используя определенное количество колонок
+        chunk = df_raw.iloc[start_index + 1: end_index, :num_columns]
+        all_data_chunks.append(chunk)
+
+    df = pd.concat(all_data_chunks, ignore_index=True)
+    df.columns = column_names
+
+    # 5. Базовая очистка объединенной таблицы
+    df.dropna(subset=['Нутриент'], inplace=True)
+    df = df[df['Нутриент'] != 'Нутриент'].reset_index(drop=True)
+
+    # Переименуем обрезанные колонки для единообразия
+    df = df.rename(columns={'Содержан': 'Содержание', 'Единиц': 'Единицы', 'Едини': 'Единицы'})
+
+    if 'Нутриент' not in df.columns or 'Содержание' not in df.columns:
+        logs.append(
+            f"ОШИБКА: В таблице нет обязательных столбцов 'Нутриент' или 'Содержание'. Найдено: {list(df.columns)}")
+        return {}, logs, []
+
+    # 6. Очистка названий нутриентов (аналогично parse_pdf_nutrients)
+    df['Нутриент'] = (df['Нутриент'].astype(str)
+                      .str.split('/', n=1).str[0]
+                      .str.strip(' .,\u00A0'))
+
+    # 7. Очистка числовых значений (аналогично parse_pdf_nutrients)
+    clean_values = (df['Содержание'].astype(str)
+                    .str.replace(r'[^\d,.-]', '', regex=True)  # Оставляем только цифры, запятую, точку, минус
+                    .str.replace(',', '.', regex=False)
+                    .replace({'': None, '-': None, '—': None}))
+    df['Содержание'] = pd.to_numeric(clean_values, errors='coerce')
+    df.dropna(subset=['Содержание'], inplace=True)
+
+    if df.empty:
+        logs.append("ОШИБКА: После очистки в таблице не осталось валидных числовых данных.")
+        return {}, logs, []
+
+    logs.append(f"После очистки осталось {len(df)} строк с данными.")
+
+    # 8. Сворачиваем таблицу в "широкий" формат
+    s = df.groupby('Нутриент')['Содержание'].sum()
+    wide = s.to_frame().T
+
+    # 9. Собираем итоговый словарь по TARGET_COLS
+    aggregated_data = {}
+    for col in TARGET_COLS:
+        if col in wide.columns:
+            aggregated_data[col] = float(wide[col].iloc[0])
+        else:
+            aggregated_data[col] = 0.0
+
+    logs.append("\n--- Итог парсинга нутриентов ---\n" + str({k: round(v, 3) for k, v in aggregated_data.items()}))
+
     return aggregated_data, logs, []
