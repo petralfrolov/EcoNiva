@@ -128,6 +128,7 @@ models_nutri, _ = load_models_and_get_influencers(MODEL_PATHS_NUTRI)
 if models_nutri is None:
     st.stop()
 
+
 def render_group(keys: list[str]):
     """
     Отрисовывает группу полей для ввода компонентов рациона в сайдбаре.
@@ -257,9 +258,9 @@ with st.sidebar:
                 st.rerun()
 
     st.subheader("Состав рациона:")
-    st.button("Сбросить изменения", use_container_width=True, on_click=reset_app_state)
-    st.button("Разблокировать всё", use_container_width=True, on_click=unlock_all)
-    st.button("Автоподбор", use_container_width=True, on_click=run_optimizer, args=())
+    st.button("Сбросить изменения", width='stretch', on_click=reset_app_state)
+    st.button("Разблокировать всё", width='stretch', on_click=unlock_all)
+    st.button("Автоподбор", width='stretch', on_click=run_optimizer, args=())
     lock_sv_total = st.checkbox(
         "Зафиксировать общее СВ",
         key="lock_sv_total_cb",
@@ -297,7 +298,7 @@ with tab_comp:
             current_inputs = get_current_inputs()
             pie_data = {k: v for k, v in current_inputs.items() if v > 0}
             if pie_data:
-                st.plotly_chart(build_treemap_figure(pie_data, FONT), use_container_width=True)
+                st.plotly_chart(build_treemap_figure(pie_data, FONT), config={'width': 'stretch'})
             else:
                 st.info("Нет данных для отображения структуры рациона.")
 
@@ -357,7 +358,7 @@ with tab_comp:
             st.warning("\n".join(md_lines))
 
         # --- Большой график ---
-        st.plotly_chart(build_acids_bar_figure(preds, FONT), use_container_width=True)
+        st.plotly_chart(build_acids_bar_figure(preds, FONT), config={'width': 'stretch'})
 
         # --- Интерпретация ---
         st.markdown("---")
@@ -374,7 +375,7 @@ with tab_comp:
                   .background_gradient(cmap="bwr", vmin=-M, vmax=M, axis=None)
                   .format("{:.3f}"))
 
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(styled, width='stretch')
         st.caption(
             "Цвет: красный — положительное влияние (рост кислоты при +1 кг), синий — отрицательное.")
 with tab_nutri:
@@ -412,7 +413,7 @@ with tab_nutri:
                         f"  - Уменьшить нутриенты: {', '.join(payload['dec']) or '—'}"
                     )
                 st.warning("\n".join(md_lines))
-            st.plotly_chart(build_acids_bar_figure(preds, FONT), use_container_width=True)
+            st.plotly_chart(build_acids_bar_figure(preds, FONT), config={'width': 'stretch'})
 
             # --- Интерпретация по нутриентам ---
             st.markdown("---")
@@ -423,4 +424,4 @@ with tab_nutri:
                       .style
                       .background_gradient(cmap="bwr", vmin=-M, vmax=M, axis=None)
                       .format("{:.3f}"))
-            st.dataframe(styled, use_container_width=True)
+            st.dataframe(styled, width='stretch')

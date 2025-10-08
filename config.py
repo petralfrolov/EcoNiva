@@ -17,7 +17,7 @@ MODEL_PATHS = {
     "Линоленовая": BASE_DIR / "ols_models" / "ols_Линоленовая.pkl",
 }
 
-MODEL_PATHS_NUTRI  = {
+MODEL_PATHS_NUTRI = {
     "Лауриновая": BASE_DIR / "ols_models_nutrients" / "ols_nutrients_Лауриновая.pkl",
     "Пальмитиновая": BASE_DIR / "ols_models_nutrients" / "ols_nutrients_Пальмитиновая.pkl",
     "Стеариновая": BASE_DIR / "ols_models_nutrients" / "ols_nutrients_Стеариновая.pkl",
