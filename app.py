@@ -217,6 +217,73 @@ def run_optimizer():
     run_analysis()
 
 
+def apply_classification():
+    """
+    Callback-функция для кнопки "Применить классификацию".
+
+    Эта функция вызывается по нажатию кнопки. Она обрабатывает выбранные
+    категории для неопознанных компонентов, обновляет значения в состоянии
+    сессии (st.session_state) и запускает пересчет анализа.
+    """
+    # Создаем список для компонентов, которые так и останутся неклассифицированными
+    remaining_unclassified = []
+
+    # Проходим по всем неопознанным компонентам
+    for i, item in enumerate(st.session_state.unclassified_feeds):
+        # Получаем выбор пользователя из соответствующего выпадающего списка
+        selectbox_key = f"selectbox_{i}"
+        selected_category = st.session_state.get(selectbox_key, "(Не классифицировать)")
+
+        # Если пользователь выбрал реальную категорию
+        if selected_category != "(Не классифицировать)":
+            # Безопасно обновляем значение для этой категории в состоянии
+            input_key = f"inp_{selected_category}"
+            current_value = st.session_state.get(input_key, 0.0)
+            st.session_state[input_key] = current_value + item['value']
+            st.toast(f"Добавлено {item['value']:.2f} кг СВ к категории '{selected_category}'")
+        else:
+            # Если компонент не был классифицирован, добавляем его в список оставшихся
+            remaining_unclassified.append(item)
+
+    # Обновляем список неопознанных компонентов в состоянии
+    st.session_state.unclassified_feeds = remaining_unclassified
+
+    # После всех обновлений заново запускаем полный анализ рациона
+    # Это обновит все графики и прогнозы
+    run_analysis()
+
+
+def render_unclassified_feeds_classifier():
+    """
+    Отрисовывает интерфейс для ручной классификации неопознанных компонентов.
+
+    Для каждого неопознанного компонента создается выпадающий список
+    с доступными категориями. Кнопка "Применить" использует callback-функцию
+    `apply_classification` для безопасного обновления состояния.
+    """
+    st.warning("⚠️ Обнаружены неопознанные компоненты.")
+
+    # Готовим список категорий для выпадающих списков
+    available_categories = ["(Не классифицировать)"] + list(FEED_MAP.keys())
+
+    # Отрисовываем элементы для каждого неопознанного компонента
+    for i, item in enumerate(st.session_state.unclassified_feeds):
+        col1, col2 = st.columns([2, 3])
+        with col1:
+            st.write(f"**{item['name']}** ({item['value']:.2f} кг СВ)")
+        with col2:
+            st.selectbox(
+                f"Выберите категорию для {item['name']}",
+                options=available_categories,
+                key=f"selectbox_{i}",  # Уникальный ключ для каждого selectbox
+                label_visibility="collapsed"
+            )
+
+    # Кнопка теперь не имеет блока if, а просто вызывает функцию `apply_classification`
+    # при нажатии. Streamlit автоматически перерисует страницу после выполнения функции.
+    st.button("Применить классификацию", on_click=apply_classification)
+
+
 # --- Сайдбар ---
 with st.sidebar:
     st.header("Параметры рациона")
@@ -280,12 +347,7 @@ with tab_comp:
 
     if st.session_state.unclassified_feeds:
         with st.container(border=True):
-            st.warning("⚠️ Обнаружены неопознанные компоненты.")
-
-            for i, item in enumerate(st.session_state.unclassified_feeds):
-                c1, c2 = st.columns([3, 2])
-                with c1:
-                    st.write(f"**{item['name']}** ({item['value']:.2f} кг СВ)")
+            render_unclassified_feeds_classifier()
 
     if not st.session_state.analysis_run:
         st.info("Введите данные в панели слева или загрузите pdf/xlsx отчёт для начала анализа.")
