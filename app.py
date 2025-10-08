@@ -255,7 +255,7 @@ with st.sidebar:
                 run_analysis()
                 st.rerun()
 
-    st.subheader("Состав рациона (кг СВ):")
+    st.subheader("Состав рациона:")
     st.button("Сбросить изменения", use_container_width=True, on_click=reset_app_state)
     st.button("Разблокировать всё", use_container_width=True, on_click=unlock_all)
     st.button("Автоподбор", use_container_width=True, on_click=run_optimizer, args=())
@@ -264,7 +264,7 @@ with st.sidebar:
         key="lock_sv_total_cb",
         help="Если опция включена, автоподбор будет только перераспределять компоненты, сохраняя их общую сумму."
     )
-    with st.expander("Компоненты", expanded=True):
+    with st.expander("Компоненты (кг СВ)", expanded=True):
         render_group(all_components)
     with st.expander("Нутриенты", expanded=True):
         render_nutrients_controls()
