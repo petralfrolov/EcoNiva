@@ -227,29 +227,20 @@ def apply_classification():
     """
     # Создаем список для компонентов, которые так и останутся неклассифицированными
     remaining_unclassified = []
-
-    # Проходим по всем неопознанным компонентам
     for i, item in enumerate(st.session_state.unclassified_feeds):
         # Получаем выбор пользователя из соответствующего выпадающего списка
         selectbox_key = f"selectbox_{i}"
         selected_category = st.session_state.get(selectbox_key, "(Не классифицировать)")
 
-        # Если пользователь выбрал реальную категорию
         if selected_category != "(Не классифицировать)":
-            # Безопасно обновляем значение для этой категории в состоянии
             input_key = f"inp_{selected_category}"
             current_value = st.session_state.get(input_key, 0.0)
             st.session_state[input_key] = current_value + item['value']
             st.toast(f"Добавлено {item['value']:.2f} кг СВ к категории '{selected_category}'")
         else:
-            # Если компонент не был классифицирован, добавляем его в список оставшихся
             remaining_unclassified.append(item)
 
-    # Обновляем список неопознанных компонентов в состоянии
     st.session_state.unclassified_feeds = remaining_unclassified
-
-    # После всех обновлений заново запускаем полный анализ рациона
-    # Это обновит все графики и прогнозы
     run_analysis()
 
 
@@ -262,8 +253,6 @@ def render_unclassified_feeds_classifier():
     `apply_classification` для безопасного обновления состояния.
     """
     st.warning("⚠️ Обнаружены неопознанные компоненты.")
-
-    # Готовим список категорий для выпадающих списков
     available_categories = ["(Не классифицировать)"] + list(FEED_MAP.keys())
 
     # Отрисовываем элементы для каждого неопознанного компонента
@@ -275,12 +264,10 @@ def render_unclassified_feeds_classifier():
             st.selectbox(
                 f"Выберите категорию для {item['name']}",
                 options=available_categories,
-                key=f"selectbox_{i}",  # Уникальный ключ для каждого selectbox
+                key=f"selectbox_{i}",
                 label_visibility="collapsed"
             )
 
-    # Кнопка теперь не имеет блока if, а просто вызывает функцию `apply_classification`
-    # при нажатии. Streamlit автоматически перерисует страницу после выполнения функции.
     st.button("Применить классификацию", on_click=apply_classification)
 
 
