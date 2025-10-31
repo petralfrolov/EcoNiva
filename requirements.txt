@@ -8,3 +8,5 @@ pdfplumber
 openpyxl
 matplotlib
 xlrd
+bcrypt
+sqlalchemy
